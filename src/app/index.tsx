@@ -1,98 +1,251 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { useEffect, useState } from 'react';
+import { FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
+import { useTheme } from '@/hooks/use-theme';
+import {
+    requestBlePermissions,
+    scanForHeartRateSensors,
+} from '@/sensors/BleHeartRateSensor';
+import { getBleManager } from '@/sensors/bleManager';
+import {
+    MOCK_SCENARIO_LABELS,
+    type MockScenario,
+} from '@/sensors/MockHeartRateSensor';
+import type { ScannedSensor } from '@/sensors/types';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
+const STATE_LABELS: Record<string, string> = {
+  idle: 'Inactivo',
+  connecting: 'Conectando…',
+  streaming: 'Monitorizando',
+  disconnected: 'Desconectado',
+  error: 'Error',
+};
+
+export default function MonitorScreen() {
+  const theme = useTheme();
+  const {
+    connectionState,
+    currentReading,
+    lastEvent,
+    eventCount,
+    sensorLabel,
+    startMock,
+    startBle,
+    stop,
+  } = useMonitorStore();
+
+  const streaming = connectionState === 'streaming';
+
+  useEffect(() => {
+    if (streaming) {
+      activateKeepAwakeAsync('monitor').catch(() => {});
+      return () => {
+        void deactivateKeepAwake('monitor');
+      };
+    }
+  }, [streaming]);
+  const [mode, setMode] = useState<'mock' | 'ble'>('mock');
+  const [scenario, setScenario] = useState<MockScenario>('normal');
+  const [scanning, setScanning] = useState(false);
+  const [devices, setDevices] = useState<ScannedSensor[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const startScan = async () => {
+    setError(null);
+    const granted = await requestBlePermissions();
+    if (!granted) {
+      setError('Permisos de Bluetooth denegados');
+      return;
+    }
+    setDevices([]);
+    setScanning(true);
+    scanForHeartRateSensors(
+      getBleManager(),
+      (d) => setDevices((prev) => [...prev, d]),
+      10_000,
     );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+    setTimeout(() => setScanning(false), 10_000);
+  };
 
-export default function HomeScreen() {
+  const connectTo = async (device: ScannedSensor) => {
+    setError(null);
+    try {
+      await startBle(device.id);
+    } catch {
+      setError(`No se pudo conectar a ${device.name}`);
+    }
+  };
+
   return (
     <ThemedView style={styles.container}>
+
       <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
+        {/* Big live BPM readout */}
+        <ThemedView style={styles.hero}>
+          <ThemedText type="small" themeColor="textSecondary">
+            {STATE_LABELS[connectionState]}
+            {sensorLabel ? ` · ${sensorLabel}` : ''}
+          </ThemedText>
+          <ThemedText style={styles.bpm}>
+            {currentReading ? currentReading.bpm : '--'}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            bpm · eventos esta sesión: {eventCount}
           </ThemedText>
         </ThemedView>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+        {lastEvent && (
+          <ThemedView type="backgroundElement" style={styles.alertBox}>
+            <ThemedText type="smallBold">
+              {lastEvent.type === 'bradycardia'
+                ? `Bradicardia: ${lastEvent.bpm} bpm`
+                : `Pausa: ${lastEvent.rrIntervalMs} ms`}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {new Date(lastEvent.timestamp).toLocaleTimeString()}
+            </ThemedText>
+          </ThemedView>
+        )}
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
+        {/* Source picker */}
+        <ThemedView style={styles.row}>
+          {(['mock', 'ble'] as const).map((m) => (
+            <Pressable
+              key={m}
+              onPress={() => setMode(m)}
+              style={[
+                styles.chip,
+                { backgroundColor: theme.backgroundElement },
+                mode === m && { backgroundColor: theme.backgroundSelected },
+              ]}>
+              <ThemedText type="small">
+                {m === 'mock' ? 'Simulador' : 'Bluetooth'}
+              </ThemedText>
+            </Pressable>
+          ))}
         </ThemedView>
 
-        {Platform.OS === 'web' && <WebBadge />}
+        {mode === 'mock' ? (
+          <ThemedView style={styles.row}>
+            {(Object.keys(MOCK_SCENARIO_LABELS) as MockScenario[]).map((s) => (
+              <Pressable
+                key={s}
+                onPress={() => setScenario(s)}
+                style={[
+                  styles.chip,
+                  { backgroundColor: theme.backgroundElement },
+                  scenario === s && {
+                    backgroundColor: theme.backgroundSelected,
+                  },
+                ]}>
+                <ThemedText type="small">
+                  {MOCK_SCENARIO_LABELS[s].split(' ')[0]}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </ThemedView>
+        ) : (
+          <>
+            <Pressable
+              onPress={startScan}
+              style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText type="smallBold">
+                {scanning ? 'Buscando…' : 'Buscar sensores BLE'}
+              </ThemedText>
+            </Pressable>
+            <FlatList
+              data={devices}
+              keyExtractor={(d) => d.id}
+              style={styles.deviceList}
+              renderItem={({ item }) => (
+                <Pressable
+                  onPress={() => connectTo(item)}
+                  style={[
+                    styles.deviceRow,
+                    { backgroundColor: theme.backgroundElement },
+                  ]}>
+                  <ThemedText type="small">{item.name}</ThemedText>
+                </Pressable>
+              )}
+            />
+          </>
+        )}
+
+        {error && (
+          <ThemedText type="small" themeColor="textSecondary">
+            {error}
+          </ThemedText>
+        )}
+
+        <Pressable
+          onPress={() =>
+            streaming ? stop() : mode === 'mock' ? startMock(scenario) : undefined
+          }
+          style={[
+            styles.primaryButton,
+            { backgroundColor: streaming ? '#B3261E' : '#2E7D32' },
+          ]}>
+          <ThemedText type="smallBold" style={styles.primaryButtonText}>
+            {streaming
+              ? 'Detener'
+              : mode === 'mock'
+                ? 'Iniciar simulación'
+                : 'Selecciona un sensor'}
+          </ThemedText>
+        </Pressable>
       </SafeAreaView>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
+  container: { flex: 1 },
   safeArea: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
+    alignSelf: 'center',
+    width: '100%',
     maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
     paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
+    paddingBottom: BottomTabInset + Spacing.three,
     gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
   },
+  hero: { alignItems: 'center', gap: Spacing.one, flex: 1, justifyContent: 'center' },
+  bpm: { fontSize: 96, fontWeight: 700, lineHeight: 104 },
+  alertBox: {
+    alignSelf: 'stretch',
+    borderRadius: Spacing.three,
+    padding: Spacing.three,
+    gap: Spacing.half,
+  },
+  row: { flexDirection: 'row', gap: Spacing.two },
+  chip: {
+    borderRadius: Spacing.five,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  button: {
+    borderRadius: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+  },
+  deviceList: { alignSelf: 'stretch', maxHeight: 160 },
+  deviceRow: {
+    borderRadius: Spacing.two,
+    padding: Spacing.three,
+    marginBottom: Spacing.two,
+  },
+  primaryButton: {
+    alignSelf: 'stretch',
+    borderRadius: Spacing.three,
+    paddingVertical: Spacing.three,
+    alignItems: 'center',
+  },
+  primaryButtonText: { color: '#ffffff' },
 });
