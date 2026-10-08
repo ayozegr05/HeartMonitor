@@ -26,7 +26,8 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
         "android.permission.WAKE_LOCK",
-        "android.permission.health.WRITE_HEART_RATE"
+        "android.permission.health.WRITE_HEART_RATE",
+        "android.permission.health.READ_HEART_RATE"
       ]
     },
     "web": {

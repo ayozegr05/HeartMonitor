@@ -7,6 +7,7 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { restoreFromHealthConnect } from '@/features/healthconnect/healthConnectRestore';
 import {
   healthConnectStatus,
   requestHealthConnectAccess,
@@ -30,8 +31,11 @@ function HealthConnectCard() {
     setHealthConnectEnabled,
     syncHealthConnect,
   } = useMonitorStore();
+  const thresholds = useMonitorStore((s) => s.thresholds);
   const [status, setStatus] = useState<HealthConnectAvailability | null>(null);
   const [busy, setBusy] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreMsg, setRestoreMsg] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -78,6 +82,38 @@ function HealthConnectCard() {
             {busy ? 'Solicitando…' : 'Activar sincronización'}
           </ThemedText>
         </Pressable>
+      )}
+      {status === 'available' && (
+        <Pressable
+          onPress={async () => {
+            setRestoring(true);
+            setRestoreMsg(null);
+            try {
+              const res = await restoreFromHealthConnect(thresholds);
+              setRestoreMsg(
+                res === null
+                  ? 'No se pudo acceder a Health Connect.'
+                  : res.importedReadings === 0
+                    ? 'No hay lecturas nuevas que restaurar.'
+                    : `${res.importedReadings} lecturas restauradas · ${res.importedBradycardias} bradicardias`,
+              );
+            } catch {
+              setRestoreMsg('La restauración falló.');
+            } finally {
+              setRestoring(false);
+            }
+          }}
+          disabled={restoring}
+          style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+          <ThemedText type="smallBold">
+            {restoring ? 'Restaurando…' : 'Restaurar histórico'}
+          </ThemedText>
+        </Pressable>
+      )}
+      {restoreMsg !== null && (
+        <ThemedText type="small" themeColor="textSecondary">
+          {restoreMsg}
+        </ThemedText>
       )}
       {healthConnectEnabled && (
         <>

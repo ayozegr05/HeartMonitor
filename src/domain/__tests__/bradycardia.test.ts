@@ -1,4 +1,4 @@
-import { BradycardiaDetector } from '../bradycardia';
+import { BradycardiaDetector, detectBradycardiaEvents } from '../bradycardia';
 import { activeLowThreshold, isNightTime } from '../thresholds';
 import { DEFAULT_THRESHOLDS, type HRReading } from '../models';
 
@@ -46,6 +46,47 @@ describe('BradycardiaDetector', () => {
     d.evaluate(reading(40, 140_000), 45);
     const second = d.evaluate(reading(40, 175_000), 45);
     expect(second).not.toBeNull();
+  });
+});
+
+describe('detectBradycardiaEvents', () => {
+  const t = (iso: string, offsetMs = 0) => Date.parse(iso) + offsetMs;
+  const stream = (iso: string, bpms: number[], stepMs = 1_000) =>
+    bpms.map((bpm, i) => reading(bpm, t(iso, i * stepMs)));
+
+  it('emits the same event the live detector would have', () => {
+    const events = detectBradycardiaEvents(
+      stream('2026-01-05T15:00:00', [60, 40, 38, 39, 41], 15_000),
+      DEFAULT_THRESHOLDS,
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('bradycardia');
+    expect(events[0].bpm).toBe(38);
+    expect(events[0].durationMs).toBe(30_000);
+  });
+
+  it('applies the night floor per reading timestamp', () => {
+    // 40 bpm sustained for a minute alerts during the day (floor 45)…
+    const dayEvents = detectBradycardiaEvents(
+      stream('2026-01-05T15:00:00', new Array(61).fill(40)),
+      DEFAULT_THRESHOLDS,
+    );
+    expect(dayEvents).toHaveLength(1);
+    // …but not at night (floor 35).
+    const nightEvents = detectBradycardiaEvents(
+      stream('2026-01-05T03:00:00', new Array(61).fill(40)),
+      DEFAULT_THRESHOLDS,
+    );
+    expect(nightEvents).toHaveLength(0);
+  });
+
+  it('emits one event per sustained episode, re-armed by recovery', () => {
+    const bpms = [...new Array(61).fill(40), ...new Array(5).fill(60), ...new Array(61).fill(40)];
+    const events = detectBradycardiaEvents(
+      stream('2026-01-05T15:00:00', bpms),
+      DEFAULT_THRESHOLDS,
+    );
+    expect(events).toHaveLength(2);
   });
 });
 
