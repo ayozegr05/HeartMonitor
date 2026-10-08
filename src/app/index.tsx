@@ -1,7 +1,10 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useEffect, useState } from 'react';
-import { FlatList, Pressable, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Animated, FlatList, Pressable, StyleSheet } from 'react-native';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -24,6 +27,7 @@ const STATE_LABELS: Record<string, string> = {
   connecting: 'Conectando…',
   streaming: 'Monitorizando',
   disconnected: 'Desconectado',
+  reconnecting: 'Reconectando…',
   error: 'Error',
 };
 
@@ -35,12 +39,57 @@ export default function MonitorScreen() {
     lastEvent,
     eventCount,
     sensorLabel,
+    bleDevice,
+    reconnectAttempt,
     startMock,
     startBle,
     stop,
+    setMockScenario,
   } = useMonitorStore();
 
   const streaming = connectionState === 'streaming';
+  const insets = useSafeAreaInsets();
+
+  // Honest readout: a link that delivers nothing for a while is not
+  // 'monitoring'. Tick only while streaming so the check re-renders.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!streaming) return;
+    const t = setInterval(() => setNow(Date.now()), 2_000);
+    return () => clearInterval(t);
+  }, [streaming]);
+  const staleData =
+    streaming && (!currentReading || now - currentReading.timestamp > 8_000);
+
+  const [pulse] = useState(() => new Animated.Value(1));
+  const liveBpm = currentReading?.bpm ?? 60;
+  // Snap the period to ~5 bpm steps: ordinary 1 Hz jitter then leaves
+  // beatMs unchanged and the loop below keeps running — a 38 bpm beat
+  // needs ~1.6 s to finish a cycle and must not restart every reading.
+  const beatMs = Math.max(300, 60_000 / Math.max(30, Math.round(liveBpm / 5) * 5));
+
+  useEffect(() => {
+    if (!streaming) {
+      pulse.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1.3,
+          duration: beatMs * 0.2,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: beatMs * 0.8,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [streaming, beatMs, pulse]);
 
   useEffect(() => {
     if (streaming) {
@@ -83,15 +132,27 @@ export default function MonitorScreen() {
   };
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView
+      style={[styles.container, { paddingTop: insets.top }]}>
 
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={styles.safeArea} edges={['bottom']}>
         {/* Big live BPM readout */}
         <ThemedView style={styles.hero}>
           <ThemedText type="small" themeColor="textSecondary">
-            {STATE_LABELS[connectionState]}
+            {staleData
+              ? currentReading
+                ? 'Sin datos nuevos — revisa el reloj'
+                : 'Conectado — esperando FC'
+              : STATE_LABELS[connectionState]}
+            {connectionState === 'reconnecting' && reconnectAttempt > 0
+              ? ` (intento ${reconnectAttempt})`
+              : ''}
             {sensorLabel ? ` · ${sensorLabel}` : ''}
           </ThemedText>
+          <Animated.Text
+            style={[styles.heart, { transform: [{ scale: pulse }] }]}>
+            ❤️
+          </Animated.Text>
           <ThemedText style={styles.bpm}>
             {currentReading ? currentReading.bpm : '--'}
           </ThemedText>
@@ -132,33 +193,75 @@ export default function MonitorScreen() {
         </ThemedView>
 
         {mode === 'mock' ? (
-          <ThemedView style={styles.row}>
-            {(Object.keys(MOCK_SCENARIO_LABELS) as MockScenario[]).map((s) => (
-              <Pressable
-                key={s}
-                onPress={() => setScenario(s)}
-                style={[
-                  styles.chip,
-                  { backgroundColor: theme.backgroundElement },
-                  scenario === s && {
-                    backgroundColor: theme.backgroundSelected,
-                  },
-                ]}>
-                <ThemedText type="small">
-                  {MOCK_SCENARIO_LABELS[s].split(' ')[0]}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </ThemedView>
+          <>
+            <ThemedView style={styles.row}>
+              {(Object.keys(MOCK_SCENARIO_LABELS) as MockScenario[]).map((s) => (
+                <Pressable
+                  key={s}
+                  onPress={() => {
+                    setScenario(s);
+                    setMockScenario(s);
+                  }}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: theme.backgroundElement },
+                    scenario === s && {
+                      backgroundColor: theme.backgroundSelected,
+                    },
+                  ]}>
+                  <ThemedText type="small">
+                    {MOCK_SCENARIO_LABELS[s].split(' ')[0]}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </ThemedView>
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              style={styles.hint}>
+              {MOCK_SCENARIO_LABELS[scenario]} — el simulador finge ese
+              ritmo para probar las alertas sin reloj
+            </ThemedText>
+          </>
         ) : (
           <>
+            {(streaming ||
+              connectionState === 'connecting' ||
+              connectionState === 'reconnecting') &&
+            bleDevice ? (
+              <ThemedView type="backgroundElement" style={styles.alertBox}>
+                <ThemedText type="smallBold">
+                  {connectionState === 'reconnecting'
+                    ? `Reconectando a ${bleDevice.label}…`
+                    : `✓ ${bleDevice.label} conectado`}
+                </ThemedText>
+                {staleData && (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Esperando datos — activa «Emitir FC» en el reloj
+                  </ThemedText>
+                )}
+              </ThemedView>
+            ) : null}
             <Pressable
               onPress={startScan}
               style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
               <ThemedText type="smallBold">
-                {scanning ? 'Buscando…' : 'Buscar sensores BLE'}
+                {scanning
+                  ? 'Buscando…'
+                  : streaming
+                    ? 'Buscar otros sensores'
+                    : 'Buscar sensores BLE'}
               </ThemedText>
             </Pressable>
+            {bleDevice && !streaming && connectionState !== 'reconnecting' && (
+              <Pressable
+                onPress={() => connectTo({ id: bleDevice.id, name: bleDevice.label })}
+                style={[styles.button, { backgroundColor: theme.backgroundSelected }]}>
+                <ThemedText type="smallBold">
+                  Reconectar a {bleDevice.label}
+                </ThemedText>
+              </Pressable>
+            )}
             <FlatList
               data={devices}
               keyExtractor={(d) => d.id}
@@ -182,6 +285,8 @@ export default function MonitorScreen() {
             {error}
           </ThemedText>
         )}
+
+        <ThemedView style={styles.spacer} />
 
         <Pressable
           onPress={() =>
@@ -216,13 +321,21 @@ const styles = StyleSheet.create({
     paddingBottom: BottomTabInset + Spacing.three,
     gap: Spacing.three,
   },
-  hero: { alignItems: 'center', gap: Spacing.one, flex: 1, justifyContent: 'center' },
-  bpm: { fontSize: 96, fontWeight: 700, lineHeight: 104 },
+  hero: {
+    alignItems: 'center',
+    gap: Spacing.one,
+    paddingTop: Spacing.five,
+    paddingBottom: Spacing.three,
+  },
+  spacer: { flex: 1 },
+  heart: { fontSize: 60 },
+  bpm: { fontSize: 80, fontWeight: 700, lineHeight: 88 },
   alertBox: {
     alignSelf: 'stretch',
     borderRadius: Spacing.three,
     padding: Spacing.three,
     gap: Spacing.half,
+    marginTop: Spacing.two,
   },
   row: { flexDirection: 'row', gap: Spacing.two },
   chip: {
@@ -236,6 +349,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
   },
   deviceList: { alignSelf: 'stretch', maxHeight: 160 },
+  hint: { textAlign: 'center' },
   deviceRow: {
     borderRadius: Spacing.two,
     padding: Spacing.three,

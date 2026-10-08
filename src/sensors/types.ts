@@ -5,6 +5,7 @@ export type SensorConnectionState =
   | 'connecting'
   | 'streaming'
   | 'disconnected'
+  | 'reconnecting'
   | 'error';
 
 /** A sensor discovered during a BLE scan. */

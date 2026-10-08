@@ -22,7 +22,12 @@
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_CONNECT"
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
+        "android.permission.WAKE_LOCK",
+        "android.permission.health.WRITE_HEART_RATE",
+        "android.permission.health.READ_HEART_RATE"
       ]
     },
     "web": {
@@ -41,7 +46,19 @@
       ],
       "react-native-ble-plx",
       "expo-sqlite",
-      "expo-notifications"
+      "expo-notifications",
+      "./plugins/withBleForegroundService",
+      "./plugins/withAndroidAutoBackup",
+      "expo-sharing",
+      "react-native-health-connect",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
