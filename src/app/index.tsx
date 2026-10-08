@@ -172,31 +172,56 @@ export default function MonitorScreen() {
         </ThemedView>
 
         {mode === 'mock' ? (
-          <ThemedView style={styles.row}>
-            {(Object.keys(MOCK_SCENARIO_LABELS) as MockScenario[]).map((s) => (
-              <Pressable
-                key={s}
-                onPress={() => setScenario(s)}
-                style={[
-                  styles.chip,
-                  { backgroundColor: theme.backgroundElement },
-                  scenario === s && {
-                    backgroundColor: theme.backgroundSelected,
-                  },
-                ]}>
-                <ThemedText type="small">
-                  {MOCK_SCENARIO_LABELS[s].split(' ')[0]}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </ThemedView>
+          <>
+            <ThemedView style={styles.row}>
+              {(Object.keys(MOCK_SCENARIO_LABELS) as MockScenario[]).map((s) => (
+                <Pressable
+                  key={s}
+                  onPress={() => setScenario(s)}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: theme.backgroundElement },
+                    scenario === s && {
+                      backgroundColor: theme.backgroundSelected,
+                    },
+                  ]}>
+                  <ThemedText type="small">
+                    {MOCK_SCENARIO_LABELS[s].split(' ')[0]}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </ThemedView>
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              style={styles.hint}>
+              {MOCK_SCENARIO_LABELS[scenario]} — el simulador finge ese
+              ritmo para probar las alertas sin reloj
+            </ThemedText>
+          </>
         ) : (
           <>
+            {(streaming ||
+              connectionState === 'connecting' ||
+              connectionState === 'reconnecting') &&
+            bleDevice ? (
+              <ThemedView type="backgroundElement" style={styles.alertBox}>
+                <ThemedText type="smallBold">
+                  {connectionState === 'reconnecting'
+                    ? `Reconectando a ${bleDevice.label}…`
+                    : `✓ ${bleDevice.label} conectado`}
+                </ThemedText>
+              </ThemedView>
+            ) : null}
             <Pressable
               onPress={startScan}
               style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
               <ThemedText type="smallBold">
-                {scanning ? 'Buscando…' : 'Buscar sensores BLE'}
+                {scanning
+                  ? 'Buscando…'
+                  : streaming
+                    ? 'Buscar otros sensores'
+                    : 'Buscar sensores BLE'}
               </ThemedText>
             </Pressable>
             {bleDevice && !streaming && connectionState !== 'reconnecting' && (
@@ -286,6 +311,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
   },
   deviceList: { alignSelf: 'stretch', maxHeight: 160 },
+  hint: { textAlign: 'center' },
   deviceRow: {
     borderRadius: Spacing.two,
     padding: Spacing.three,
