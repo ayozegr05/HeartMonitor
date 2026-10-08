@@ -190,10 +190,16 @@ export const useMonitorStore = create<MonitorState>()(
         unsubscribeReading = next.subscribe(handleReading);
       };
 
-      const connectBle = async (deviceId: string): Promise<void> => {
+      const connectBle = async (
+        deviceId: string,
+        beforeStart?: (label: string) => Promise<void>,
+      ): Promise<void> => {
         const device = await getBleManager().connectToDevice(deviceId);
         const next = new BleHeartRateSensor(getBleManager(), device);
         wireSensor(next);
+        // Session row must exist before the stream can emit — readings and
+        // events are tagged with sessionId from the first sample.
+        await beforeStart?.(next.label);
         await next.start();
         set({
           source: 'ble',
@@ -220,19 +226,20 @@ export const useMonitorStore = create<MonitorState>()(
        * hour (SLEEP_END_HOUR), summarizes the unreported night span and
        * notifies. Re-arms each morning for multi-day sessions.
        */
-      const emitMorningReport = async (): Promise<void> => {
+      const emitMorningReport = async (
+        reportEnd = Date.now(),
+      ): Promise<void> => {
         const { sessionId, sessionStartedAt, lastReportedAt, thresholds } =
           get();
         if (sessionId == null || sessionStartedAt == null) return;
         try {
           const since = lastReportedAt ?? sessionStartedAt;
-          const now = Date.now();
           const [readingRows, events] = await Promise.all([
             getSessionReadings(sessionId),
             getSessionAlertEvents(sessionId),
           ]);
           const scoped = readingRows.filter(
-            (r) => r.timestamp >= since && r.timestamp < now,
+            (r) => r.timestamp >= since && r.timestamp < reportEnd,
           );
           // Only worth a notification when a real night was covered.
           if (
@@ -242,13 +249,15 @@ export const useMonitorStore = create<MonitorState>()(
             return;
           }
           const report = buildSessionReport(
-            { startedAt: since, endedAt: now },
+            { startedAt: since, endedAt: reportEnd },
             scoped,
             events,
             thresholds,
           );
-          set({ lastReportedAt: now });
           await fireAlert('🌅 Informe nocturno', formatReportSummary(report));
+          // Watermark advances only after the notification went out — a
+          // failed alert must not mark the night as reported.
+          set({ lastReportedAt: reportEnd });
         } catch (e) {
           console.warn('morning report failed', e);
         }
@@ -325,26 +334,54 @@ export const useMonitorStore = create<MonitorState>()(
           await beginSession();
           const next = new MockHeartRateSensor(scenario);
           wireSensor(next);
+          await openSessionRow('mock', next.label);
           await next.start();
           set({ source: 'mock', sensorLabel: next.label });
-          await openSessionRow('mock', next.label);
         },
 
         startBle: async (deviceId) => {
           await beginSession();
           try {
-            await connectBle(deviceId);
+            await connectBle(deviceId, (label) =>
+              openSessionRow('ble', label),
+            );
           } catch (e) {
             // Never connected — this is a failure, not a drop to retry.
             set({ monitoringIntent: false });
+            const sid = get().sessionId;
+            if (sid != null) {
+              void endSession(sid, Date.now()).catch(() => {});
+              set({ sessionId: null, sessionStartedAt: null });
+            }
             void stopMonitoringService().catch(() => {});
             throw e;
           }
-          await openSessionRow('ble', get().sensorLabel ?? deviceId);
         },
 
         resumeBleSession: async () => {
-          const { monitoringIntent, bleDevice, connectionState } = get();
+          const { monitoringIntent, bleDevice, connectionState, sessionId } =
+            get();
+          if (monitoringIntent && !bleDevice && sessionId != null) {
+            // Only BLE sessions survive process death — a mock run that lost
+            // its process can't resume, so close it at its last reading
+            // instead of showing "Monitorizando" forever.
+            try {
+              const rows = await getSessionReadings(sessionId);
+              await endSession(
+                sessionId,
+                rows.at(-1)?.timestamp ?? Date.now(),
+              );
+            } catch (e) {
+              console.warn('closing stale session failed', e);
+            }
+            set({
+              monitoringIntent: false,
+              sessionId: null,
+              sessionStartedAt: null,
+              lastReportedAt: null,
+            });
+            return;
+          }
           if (
             !monitoringIntent ||
             !bleDevice ||
@@ -364,14 +401,21 @@ export const useMonitorStore = create<MonitorState>()(
           // if the app died overnight before the 07:00 report could fire,
           // emit it now so the morning summary isn't lost.
           scheduleMorningReport();
-          const { sessionId, sessionStartedAt, lastReportedAt } = get();
+          const {
+            sessionId: resumedId,
+            sessionStartedAt,
+            lastReportedAt,
+          } = get();
           if (
-            sessionId != null &&
+            resumedId != null &&
             sessionStartedAt != null &&
             (lastReportedAt ?? sessionStartedAt) < lastWakeTime()
           ) {
-            void emitMorningReport();
-          } else if (sessionId == null) {
+            // Bound the delayed report to the missed wake boundary — not
+            // now, or a late restart would fold daytime monitoring into
+            // the overnight summary.
+            void emitMorningReport(lastWakeTime());
+          } else if (resumedId == null) {
             // Session predates session tracking — open a row so new
             // readings still land under a reportable session.
             void openSessionRow('ble', bleDevice.label);
