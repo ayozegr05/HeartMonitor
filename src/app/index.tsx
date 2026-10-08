@@ -1,5 +1,5 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -47,14 +47,21 @@ export default function MonitorScreen() {
 
   const [pulse] = useState(() => new Animated.Value(1));
   const liveBpm = currentReading?.bpm ?? 60;
+  const beatMsRef = useRef(0);
 
   useEffect(() => {
     if (!streaming) {
       pulse.setValue(1);
+      beatMsRef.current = 0;
       return;
     }
-    // The heart beats at the measured rate — every new reading re-times it.
+    // The heart beats at the measured rate. Readings arrive ~1 Hz, so a
+    // slow pulse (38 bpm ≈ 1.6 s) would restart on every jittered bpm and
+    // never finish a cycle — only re-time it when the period truly moves.
     const beatMs = Math.max(300, 60_000 / Math.max(30, liveBpm));
+    const prev = beatMsRef.current;
+    if (prev > 0 && Math.abs(beatMs - prev) / prev < 0.12) return;
+    beatMsRef.current = beatMs;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
