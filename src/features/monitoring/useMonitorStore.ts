@@ -515,6 +515,7 @@ export const useMonitorStore = create<MonitorState>()(
             connectionState: 'idle',
             source: null,
             sensorLabel: null,
+            currentReading: null,
             sessionId: null,
             sessionStartedAt: null,
             lastReportedAt: null,
