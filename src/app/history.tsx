@@ -6,8 +6,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
+import { formatReportSummary } from '@/domain/morningReport';
 import { getRecentEvents } from '@/data/readingsRepository';
 import { events } from '@/data/schema';
+import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
+import { loadSessionReports } from '@/features/reports/sessionReports';
 import { useTheme } from '@/hooks/use-theme';
 import type { AlertEvent } from '@/domain/models';
 
@@ -27,14 +30,21 @@ function describe(row: EventRow): string {
 
 export default function HistoryScreen() {
   const theme = useTheme();
+  const thresholds = useMonitorStore((s) => s.thresholds);
   const [rows, setRows] = useState<EventRow[]>([]);
+  const [latestSummary, setLatestSummary] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       getRecentEvents(100)
         .then(setRows)
         .catch(() => setRows([]));
-    }, []),
+      loadSessionReports(thresholds, 1)
+        .then(([latest]) =>
+          setLatestSummary(latest ? formatReportSummary(latest.report) : null),
+        )
+        .catch(() => setLatestSummary(null));
+    }, [thresholds]),
   );
 
   return (
@@ -43,6 +53,14 @@ export default function HistoryScreen() {
         <ThemedText type="subtitle" style={styles.title}>
           Eventos
         </ThemedText>
+        {latestSummary && (
+          <ThemedView type="backgroundElement" style={styles.summaryCard}>
+            <ThemedText type="smallBold">Última sesión</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {latestSummary}
+            </ThemedText>
+          </ThemedView>
+        )}
         <FlatList
           data={rows}
           keyExtractor={(r) => String(r.id)}
@@ -75,6 +93,12 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1, paddingHorizontal: Spacing.four },
   title: { paddingVertical: Spacing.three },
+  summaryCard: {
+    borderRadius: Spacing.two,
+    padding: Spacing.three,
+    marginBottom: Spacing.two,
+    gap: Spacing.half,
+  },
   row: {
     borderRadius: Spacing.two,
     padding: Spacing.three,

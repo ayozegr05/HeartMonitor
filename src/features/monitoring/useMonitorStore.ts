@@ -9,9 +9,17 @@ import {
   type HRReading,
   type ThresholdProfile,
 } from '@/domain/models';
+import {
+  buildSessionReport,
+  formatReportSummary,
+} from '@/domain/morningReport';
 import { PauseDetector } from '@/domain/pauseDetection';
 import { reconnectDelayMs } from '@/domain/reconnect';
-import { activeLowThreshold } from '@/domain/thresholds';
+import {
+  activeLowThreshold,
+  isNightTime,
+  SLEEP_END_HOUR,
+} from '@/domain/thresholds';
 import { getBleManager } from '@/sensors/bleManager';
 import { BleHeartRateSensor } from '@/sensors/BleHeartRateSensor';
 import {
@@ -22,7 +30,14 @@ import type {
   IHeartRateSensor,
   SensorConnectionState,
 } from '@/sensors/types';
-import { saveEvent, saveReading } from '@/data/readingsRepository';
+import {
+  endSession,
+  getSessionAlertEvents,
+  getSessionReadings,
+  saveEvent,
+  saveReading,
+  startSession,
+} from '@/data/readingsRepository';
 import {
   startMonitoringService,
   stopMonitoringService,
@@ -51,6 +66,15 @@ interface MonitorState {
   bleDevice: BleDeviceRef | null;
   /** Reconnection attempts since the last successful stream. */
   reconnectAttempt: number;
+  /**
+   * Id of the open `sessions` row this monitoring run writes under.
+   * Persisted so a session that outlives the process (crash, reclaim)
+   * keeps accumulating under the same night for the morning report.
+   */
+  sessionId: number | null;
+  sessionStartedAt: number | null;
+  /** Watermark of the last emitted morning report (Unix ms). */
+  lastReportedAt: number | null;
 
   startMock: (scenario: MockScenario) => Promise<void>;
   startBle: (deviceId: string) => Promise<void>;
@@ -69,6 +93,26 @@ let sensor: IHeartRateSensor | null = null;
 let unsubscribeReading: (() => void) | null = null;
 let unsubscribeState: (() => void) | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reportTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Skip the morning notification for trivially short coverage (~5 min @1Hz). */
+const MIN_REPORT_READINGS = 300;
+
+/** Next local occurrence of the sleep-window end hour. */
+const msUntilNextWake = (): number => {
+  const next = new Date();
+  next.setHours(SLEEP_END_HOUR, 0, 0, 0);
+  if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
+  return next.getTime() - Date.now();
+};
+
+/** Most recent past occurrence of the sleep-window end hour. */
+const lastWakeTime = (): number => {
+  const prev = new Date();
+  prev.setHours(SLEEP_END_HOUR, 0, 0, 0);
+  if (prev.getTime() > Date.now()) prev.setDate(prev.getDate() - 1);
+  return prev.getTime();
+};
 let bradycardia = new BradycardiaDetector(DEFAULT_THRESHOLDS.sustainedMs);
 let pause = new PauseDetector(DEFAULT_THRESHOLDS.pauseRrMultiplier);
 
@@ -97,10 +141,10 @@ export const useMonitorStore = create<MonitorState>()(
         }));
 
         // Side effects — persisted + alerted, never blocking the stream.
-        void saveReading(reading, label).catch(console.warn);
+        void saveReading(reading, label, get().sessionId).catch(console.warn);
         void updateMonitoringNotification(reading.bpm).catch(() => {});
         for (const event of detected) {
-          void saveEvent(event).catch(console.warn);
+          void saveEvent(event, get().sessionId).catch(console.warn);
           const body =
             event.type === 'bradycardia'
               ? `FC ${event.bpm} bpm durante ${Math.round((event.durationMs ?? 0) / 1000)}s`
@@ -171,6 +215,79 @@ export const useMonitorStore = create<MonitorState>()(
         }
       };
 
+      /**
+       * Morning report: while a session is open, a timer fires at the wake
+       * hour (SLEEP_END_HOUR), summarizes the unreported night span and
+       * notifies. Re-arms each morning for multi-day sessions.
+       */
+      const emitMorningReport = async (): Promise<void> => {
+        const { sessionId, sessionStartedAt, lastReportedAt, thresholds } =
+          get();
+        if (sessionId == null || sessionStartedAt == null) return;
+        try {
+          const since = lastReportedAt ?? sessionStartedAt;
+          const now = Date.now();
+          const [readingRows, events] = await Promise.all([
+            getSessionReadings(sessionId),
+            getSessionAlertEvents(sessionId),
+          ]);
+          const scoped = readingRows.filter(
+            (r) => r.timestamp >= since && r.timestamp < now,
+          );
+          // Only worth a notification when a real night was covered.
+          if (
+            scoped.length < MIN_REPORT_READINGS ||
+            !scoped.some((r) => isNightTime(new Date(r.timestamp)))
+          ) {
+            return;
+          }
+          const report = buildSessionReport(
+            { startedAt: since, endedAt: now },
+            scoped,
+            events,
+            thresholds,
+          );
+          set({ lastReportedAt: now });
+          await fireAlert('🌅 Informe nocturno', formatReportSummary(report));
+        } catch (e) {
+          console.warn('morning report failed', e);
+        }
+      };
+
+      const scheduleMorningReport = (): void => {
+        if (reportTimer) clearTimeout(reportTimer);
+        reportTimer = setTimeout(() => {
+          reportTimer = null;
+          void emitMorningReport().finally(() => {
+            if (get().monitoringIntent) scheduleMorningReport();
+          });
+        }, msUntilNextWake());
+      };
+
+      /** Opens the `sessions` row and arms the morning-report timer. */
+      const openSessionRow = async (
+        source: SensorSource,
+        label: string,
+      ): Promise<void> => {
+        const startedAt = Date.now();
+        try {
+          const id = await startSession(source, label, startedAt);
+          set({
+            sessionId: id,
+            sessionStartedAt: startedAt,
+            lastReportedAt: null,
+          });
+        } catch (e) {
+          console.warn('session row failed', e);
+          set({
+            sessionId: null,
+            sessionStartedAt: startedAt,
+            lastReportedAt: null,
+          });
+        }
+        scheduleMorningReport();
+      };
+
       /** Shared session preamble: fresh detectors, clean sensor, FGS up. */
       const beginSession = async (): Promise<void> => {
         if (reconnectTimer) {
@@ -200,6 +317,9 @@ export const useMonitorStore = create<MonitorState>()(
         monitoringIntent: false,
         bleDevice: null,
         reconnectAttempt: 0,
+        sessionId: null,
+        sessionStartedAt: null,
+        lastReportedAt: null,
 
         startMock: async (scenario) => {
           await beginSession();
@@ -207,6 +327,7 @@ export const useMonitorStore = create<MonitorState>()(
           wireSensor(next);
           await next.start();
           set({ source: 'mock', sensorLabel: next.label });
+          await openSessionRow('mock', next.label);
         },
 
         startBle: async (deviceId) => {
@@ -219,6 +340,7 @@ export const useMonitorStore = create<MonitorState>()(
             void stopMonitoringService().catch(() => {});
             throw e;
           }
+          await openSessionRow('ble', get().sensorLabel ?? deviceId);
         },
 
         resumeBleSession: async () => {
@@ -238,6 +360,22 @@ export const useMonitorStore = create<MonitorState>()(
             set({ reconnectAttempt: 1 });
             scheduleReconnect();
           }
+          // Timers don't survive process death — re-arm the wake report and,
+          // if the app died overnight before the 07:00 report could fire,
+          // emit it now so the morning summary isn't lost.
+          scheduleMorningReport();
+          const { sessionId, sessionStartedAt, lastReportedAt } = get();
+          if (
+            sessionId != null &&
+            sessionStartedAt != null &&
+            (lastReportedAt ?? sessionStartedAt) < lastWakeTime()
+          ) {
+            void emitMorningReport();
+          } else if (sessionId == null) {
+            // Session predates session tracking — open a row so new
+            // readings still land under a reportable session.
+            void openSessionRow('ble', bleDevice.label);
+          }
         },
 
         stop: async () => {
@@ -246,9 +384,24 @@ export const useMonitorStore = create<MonitorState>()(
             clearTimeout(reconnectTimer);
             reconnectTimer = null;
           }
+          if (reportTimer) {
+            clearTimeout(reportTimer);
+            reportTimer = null;
+          }
+          const { sessionId } = get();
+          if (sessionId != null) {
+            void endSession(sessionId, Date.now()).catch(console.warn);
+          }
           await detachSensor();
           void stopMonitoringService().catch(() => {});
-          set({ connectionState: 'idle', source: null, sensorLabel: null });
+          set({
+            connectionState: 'idle',
+            source: null,
+            sensorLabel: null,
+            sessionId: null,
+            sessionStartedAt: null,
+            lastReportedAt: null,
+          });
         },
 
         setThresholds: (t) => set({ thresholds: t }),
@@ -257,11 +410,15 @@ export const useMonitorStore = create<MonitorState>()(
     {
       name: 'heartmonitor-settings',
       storage: createJSONStorage(() => AsyncStorage),
-      // bleDevice + monitoringIntent let a killed session resume on launch.
+      // bleDevice + monitoringIntent let a killed session resume on launch;
+      // session fields keep overnight readings under one reportable session.
       partialize: (s) => ({
         thresholds: s.thresholds,
         bleDevice: s.bleDevice,
         monitoringIntent: s.monitoringIntent,
+        sessionId: s.sessionId,
+        sessionStartedAt: s.sessionStartedAt,
+        lastReportedAt: s.lastReportedAt,
       }),
     },
   ),
