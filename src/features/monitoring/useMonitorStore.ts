@@ -102,9 +102,14 @@ let unsubscribeReading: (() => void) | null = null;
 let unsubscribeState: (() => void) | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reportTimer: ReturnType<typeof setTimeout> | null = null;
+let disconnectAlertTimer: ReturnType<typeof setTimeout> | null = null;
+let disconnectAlerted = false;
 
 /** Skip the morning notification for trivially short coverage (~5 min @1Hz). */
 const MIN_REPORT_READINGS = 300;
+
+/** A BLE dropout longer than this is worth a notification, not a blip. */
+const DISCONNECT_ALERT_MS = 2 * 60_000;
 
 /** Next local occurrence of the sleep-window end hour. */
 const msUntilNextWake = (): number => {
@@ -180,12 +185,32 @@ export const useMonitorStore = create<MonitorState>()(
           reconnectTimer = null;
           void attemptReconnect();
         }, delay);
+        // The persistent banner doesn't distinguish "streaming" from
+        // "waiting to reconnect" — flag a long outage explicitly.
+        if (!disconnectAlertTimer && !disconnectAlerted) {
+          disconnectAlertTimer = setTimeout(() => {
+            disconnectAlertTimer = null;
+            disconnectAlerted = true;
+            void fireAlert(
+              '⌚ Reloj sin conexión',
+              'Sin datos — reintentando la conexión…',
+            ).catch(console.warn);
+          }, DISCONNECT_ALERT_MS);
+        }
       };
 
       const wireSensor = (next: IHeartRateSensor): void => {
         sensor = next;
         unsubscribeState = next.onStateChange((connectionState) => {
           set({ connectionState });
+          if (connectionState === 'streaming') {
+            // Link back: re-arm the outage alert for the next drop.
+            if (disconnectAlertTimer) {
+              clearTimeout(disconnectAlertTimer);
+              disconnectAlertTimer = null;
+            }
+            disconnectAlerted = false;
+          }
           // A drop is not a stop: keep the session alive and retry the link.
           if (
             (connectionState === 'disconnected' ||
@@ -442,6 +467,11 @@ export const useMonitorStore = create<MonitorState>()(
             clearTimeout(reportTimer);
             reportTimer = null;
           }
+          if (disconnectAlertTimer) {
+            clearTimeout(disconnectAlertTimer);
+            disconnectAlertTimer = null;
+          }
+          disconnectAlerted = false;
           const { sessionId } = get();
           if (sessionId != null) {
             void endSession(sessionId, Date.now()).catch(console.warn);
