@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput } from 'react-native';
+import { Platform, Pressable, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as IntentLauncher from 'expo-intent-launcher';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -86,6 +87,31 @@ export default function SettingsScreen() {
             {saved ? 'Guardado ✓' : 'Guardar'}
           </ThemedText>
         </Pressable>
+
+        {Platform.OS === 'android' && (
+          <ThemedView style={styles.field}>
+            <ThemedText type="smallBold">Monitorización nocturna</ThemedText>
+            <Pressable
+              onPress={() =>
+                IntentLauncher.startActivityAsync(
+                  IntentLauncher.ActivityAction
+                    .IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+                ).catch(() => {})
+              }
+              style={[
+                styles.button,
+                { backgroundColor: theme.backgroundElement },
+              ]}>
+              <ThemedText type="smallBold">
+                Desactivar optimización de batería
+              </ThemedText>
+            </Pressable>
+            <ThemedText type="small" themeColor="textSecondary">
+              Si el sistema mata la app por la noche, exclúyela de la
+              optimización en los ajustes que se abren con este botón.
+            </ThemedText>
+          </ThemedView>
+        )}
 
         <ThemedText type="small" themeColor="textSecondary" style={styles.disclaimer}>
           Esta app no es un dispositivo médico. Ajusta los umbrales con la

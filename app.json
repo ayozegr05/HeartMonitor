@@ -22,7 +22,10 @@
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_CONNECT"
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
+        "android.permission.WAKE_LOCK"
       ]
     },
     "web": {
@@ -41,7 +44,8 @@
       ],
       "react-native-ble-plx",
       "expo-sqlite",
-      "expo-notifications"
+      "expo-notifications",
+      "./plugins/withBleForegroundService"
     ],
     "experiments": {
       "typedRoutes": true,
