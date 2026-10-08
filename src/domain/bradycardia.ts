@@ -1,4 +1,5 @@
-import type { AlertEvent, HRReading } from './models';
+import { activeLowThreshold } from './thresholds';
+import type { AlertEvent, HRReading, ThresholdProfile } from './models';
 
 /**
  * Detects *sustained* bradycardia — not momentary dips.
@@ -48,4 +49,25 @@ export class BradycardiaDetector {
     this.alerted = false;
     this.minObservedBpm = Number.POSITIVE_INFINITY;
   }
+}
+
+/**
+ * Re-runs sustained-bradycardia detection over a stored reading stream
+ * (e.g. readings restored from Health Connect), switching day/night floors
+ * per reading timestamp. Returns every event it would have emitted live.
+ */
+export function detectBradycardiaEvents(
+  readings: HRReading[],
+  profile: ThresholdProfile,
+): AlertEvent[] {
+  const detector = new BradycardiaDetector(profile.sustainedMs);
+  const found: AlertEvent[] = [];
+  for (const reading of readings) {
+    const event = detector.evaluate(
+      reading,
+      activeLowThreshold(profile, new Date(reading.timestamp)),
+    );
+    if (event) found.push(event);
+  }
+  return found;
 }

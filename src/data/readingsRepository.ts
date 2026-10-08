@@ -21,6 +21,27 @@ export async function saveReading(
   });
 }
 
+/** Bulk import (e.g. Health Connect restore) — no session attached. */
+export async function saveReadings(
+  batch: HRReading[],
+  source: string,
+): Promise<void> {
+  const CHUNK = 500;
+  for (let i = 0; i < batch.length; i += CHUNK) {
+    await getDb()
+      .insert(readings)
+      .values(
+        batch.slice(i, i + CHUNK).map((r) => ({
+          timestamp: r.timestamp,
+          bpm: r.bpm,
+          rrIntervalsMs: JSON.stringify(r.rrIntervalsMs),
+          source,
+          sessionId: null,
+        })),
+      );
+  }
+}
+
 export async function saveEvent(
   event: AlertEvent,
   sessionId: number | null,
