@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { formatDuration } from '@/domain/morningReport';
+import type { AlertEvent } from '@/domain/models';
 import {
   buildWeeklyReport,
   type WeeklyReport,
@@ -45,11 +46,29 @@ function formatRange(startedAt: number, endedAt: number | null): string {
   return `${day} · ${from} → ${to}`;
 }
 
+function eventLine(e: AlertEvent): string {
+  const time = new Date(e.timestamp).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  if (e.type === 'pause') {
+    return `${time} · Pausa · RR ${e.rrIntervalMs ?? '?'} ms`;
+  }
+  const detail = [
+    e.bpm !== undefined ? `${e.bpm} bpm` : null,
+    e.durationMs !== undefined ? `sostenido ${formatDuration(e.durationMs)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return `${time} · Bradicardia${detail ? ` · ${detail}` : ''}`;
+}
+
 function ReportCard({ item }: { item: SessionWithReport }) {
   const theme = useTheme();
-  const { session, report } = item;
+  const { session, report, events } = item;
   const live = session.endedAt === null;
   const hasEvents = report.eventCount > 0;
+  const [expanded, setExpanded] = useState(false);
 
   const metrics: [string, string][] = [
     ['Duración', formatDuration(report.durationMs)],
@@ -80,9 +99,14 @@ function ReportCard({ item }: { item: SessionWithReport }) {
   ];
 
   return (
-    <ThemedView
-      type="backgroundElement"
-      style={[styles.card, hasEvents && styles.cardWithEvents]}>
+    <Pressable
+      onPress={hasEvents ? () => setExpanded((v) => !v) : undefined}
+      style={({ pressed }) => [
+        styles.card,
+        hasEvents && styles.cardWithEvents,
+        { backgroundColor: theme.backgroundElement },
+        pressed && hasEvents && { opacity: 0.8 },
+      ]}>
       <ThemedView style={styles.cardHeader}>
         <ThemedText type="smallBold" style={styles.cardTitle}>
           {formatRange(session.startedAt, session.endedAt)}
@@ -110,7 +134,18 @@ function ReportCard({ item }: { item: SessionWithReport }) {
           </ThemedView>
         ))
       )}
-    </ThemedView>
+      {hasEvents && (
+        <ThemedText type="small" themeColor="textSecondary">
+          {expanded ? '▲ Ocultar eventos' : '▼ Ver eventos'}
+        </ThemedText>
+      )}
+      {expanded &&
+        events.map((e, i) => (
+          <ThemedText key={i} type="small">
+            {e.type === 'pause' ? '⏸' : '⚠️'} {eventLine(e)}
+          </ThemedText>
+        ))}
+    </Pressable>
   );
 }
 

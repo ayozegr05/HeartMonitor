@@ -1,4 +1,4 @@
-import type { ThresholdProfile } from '@/domain/models';
+import type { AlertEvent, ThresholdProfile } from '@/domain/models';
 import {
   buildSessionReport,
   type SessionReport,
@@ -15,6 +15,7 @@ export type SessionRow = typeof sessions.$inferSelect;
 export interface SessionWithReport {
   session: SessionRow;
   report: SessionReport;
+  events: AlertEvent[];
 }
 
 /**
@@ -41,6 +42,7 @@ export async function loadSessionReports(
           events,
           thresholds,
         ),
+        events,
       };
     }),
   );

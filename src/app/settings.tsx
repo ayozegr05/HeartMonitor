@@ -1,5 +1,12 @@
 import { useCallback, useState } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, TextInput } from 'react-native';
+import {
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+} from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as IntentLauncher from 'expo-intent-launcher';
@@ -280,9 +287,13 @@ export default function SettingsScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <ThemedText type="subtitle" style={styles.title}>
-          Umbrales de alerta
-        </ThemedText>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}>
+          <ThemedText type="subtitle" style={styles.title}>
+            Umbrales de alerta
+          </ThemedText>
 
         {[
           {
@@ -358,10 +369,14 @@ export default function SettingsScreen() {
           </ThemedView>
         )}
 
-        <ThemedText type="small" themeColor="textSecondary" style={styles.disclaimer}>
-          Esta app no es un dispositivo médico. Ajusta los umbrales con la
-          orientación de tu cardiólogo.
-        </ThemedText>
+          <ThemedText
+            type="small"
+            themeColor="textSecondary"
+            style={styles.disclaimer}>
+            Esta app no es un dispositivo médico. Ajusta los umbrales con la
+            orientación de tu cardiólogo.
+          </ThemedText>
+        </ScrollView>
       </SafeAreaView>
     </ThemedView>
   );
@@ -369,11 +384,14 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safeArea: {
+  safeArea: { flex: 1 },
+  scroll: {
     flex: 1,
     alignSelf: 'center',
     width: '100%',
     maxWidth: MaxContentWidth,
+  },
+  scrollContent: {
     paddingHorizontal: Spacing.four,
     paddingBottom: BottomTabInset,
     gap: Spacing.four,
