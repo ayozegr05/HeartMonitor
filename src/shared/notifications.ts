@@ -1,7 +1,8 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-const ALERT_CHANNEL_ID = 'heart-alerts';
+const ALERT_CHANNEL_ID = 'heart-alerts-v2';
+const LEGACY_CHANNEL_ID = 'heart-alerts';
 
 /**
  * Local notifications only — alerts are generated on-device, not pushed
@@ -24,7 +25,7 @@ export function configureNotificationHandler(): void {
  */
 export async function ensureNotificationSetup(): Promise<boolean> {
   if (Platform.OS === 'android') {
-    await Notifications.deleteNotificationChannelAsync(ALERT_CHANNEL_ID);
+    await Notifications.deleteNotificationChannelAsync(LEGACY_CHANNEL_ID);
     await Notifications.setNotificationChannelAsync(ALERT_CHANNEL_ID, {
       name: 'Alertas cardíacas',
       importance: Notifications.AndroidImportance.MAX,
