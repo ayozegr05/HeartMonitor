@@ -88,6 +88,8 @@ interface MonitorState {
   startMock: (scenario: MockScenario) => Promise<void>;
   startBle: (deviceId: string) => Promise<void>;
   stop: () => Promise<void>;
+  /** Switches the fake rhythm mid-run; no-op unless a mock is streaming. */
+  setMockScenario: (scenario: MockScenario) => void;
   setThresholds: (t: ThresholdProfile) => void;
   setHealthConnectEnabled: (enabled: boolean) => void;
   /** Pushes new readings to Health Connect; no-op when disabled. */
@@ -388,6 +390,12 @@ export const useMonitorStore = create<MonitorState>()(
           await openSessionRow('mock', next.label);
           await next.start();
           set({ source: 'mock', sensorLabel: next.label });
+        },
+
+        setMockScenario: (scenario) => {
+          if (sensor instanceof MockHeartRateSensor) {
+            sensor.setScenario(scenario);
+          }
         },
 
         startBle: async (deviceId) => {

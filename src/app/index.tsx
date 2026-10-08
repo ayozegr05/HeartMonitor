@@ -41,6 +41,7 @@ export default function MonitorScreen() {
     startMock,
     startBle,
     stop,
+    setMockScenario,
   } = useMonitorStore();
 
   const streaming = connectionState === 'streaming';
@@ -177,7 +178,10 @@ export default function MonitorScreen() {
               {(Object.keys(MOCK_SCENARIO_LABELS) as MockScenario[]).map((s) => (
                 <Pressable
                   key={s}
-                  onPress={() => setScenario(s)}
+                  onPress={() => {
+                    setScenario(s);
+                    setMockScenario(s);
+                  }}
                   style={[
                     styles.chip,
                     { backgroundColor: theme.backgroundElement },
