@@ -1,22 +1,29 @@
-import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet } from 'react-native';
 import { useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { HrChart } from '@/components/hr-chart';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
-import { formatDuration } from '@/domain/morningReport';
-import type { AlertEvent } from '@/domain/models';
+import { getSessionReadingBuckets } from '@/data/readingsRepository';
 import {
-  buildWeeklyReport,
-  type WeeklyReport,
+    eventBucketIndices,
+    type ChartBucket,
+} from '@/domain/hrChart';
+import type { AlertEvent, ThresholdProfile } from '@/domain/models';
+import { formatDuration } from '@/domain/morningReport';
+import { activeLowThreshold } from '@/domain/thresholds';
+import {
+    buildWeeklyReport,
+    type WeeklyReport,
 } from '@/domain/weeklyReport';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { shareWeeklyPdf } from '@/features/reports/exportWeeklyPdf';
 import {
-  loadSessionReports,
-  type SessionWithReport,
+    loadSessionReports,
+    type SessionWithReport,
 } from '@/features/reports/sessionReports';
 import { weeklyReportHtml } from '@/features/reports/weeklyReportHtml';
 import { useTheme } from '@/hooks/use-theme';
@@ -63,49 +70,91 @@ function eventLine(e: AlertEvent): string {
   return `${time} · Bradicardia${detail ? ` · ${detail}` : ''}`;
 }
 
-function ReportCard({ item }: { item: SessionWithReport }) {
+const CHART_BUCKETS = 120;
+
+/** Loads the session's aggregated series lazily when the card expands. */
+async function loadChart(
+  sessionId: number,
+  windowStart: number,
+  windowEnd: number,
+  thresholds: ThresholdProfile,
+): Promise<ChartBucket[]> {
+  const bucketMs = Math.max(1, (windowEnd - windowStart) / CHART_BUCKETS);
+  const rows = await getSessionReadingBuckets(sessionId, windowStart, bucketMs);
+  const byIndex = new Map(rows.map((r) => [r.bucket, r]));
+  return Array.from({ length: CHART_BUCKETS }, (_, i) => {
+    const startTs = windowStart + i * bucketMs;
+    const row = byIndex.get(i);
+    const hasData = row !== undefined;
+    return {
+      startTs,
+      minBpm: row?.minBpm ?? 0,
+      avgBpm: row?.avgBpm ?? 0,
+      maxBpm: row?.maxBpm ?? 0,
+      hasData,
+      belowThreshold:
+        hasData &&
+        row.avgBpm < activeLowThreshold(thresholds, new Date(startTs)),
+    };
+  });
+}
+
+function StatBlock({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
+  return (
+    <View style={styles.statBlock}>
+      <ThemedText type="small" themeColor="textSecondary">
+        {label}
+      </ThemedText>
+      <ThemedText style={[styles.statValue, color ? { color } : undefined]}>
+        {value}
+      </ThemedText>
+    </View>
+  );
+}
+
+function ReportCard({ item, thresholds }: { item: SessionWithReport; thresholds: ThresholdProfile }) {
   const theme = useTheme();
   const { session, report, events } = item;
   const live = session.endedAt === null;
   const hasEvents = report.eventCount > 0;
   const [expanded, setExpanded] = useState(false);
+  const [chart, setChart] = useState<ChartBucket[] | null>(null);
 
-  const metrics: [string, string][] = [
-    ['Duración', formatDuration(report.durationMs)],
-    [
-      'FC media (min–máx)',
-      report.avgBpm !== null
-        ? `${report.avgBpm} bpm (${report.minBpm}–${report.maxBpm})`
-        : '—',
-    ],
-    [
-      'Bajo umbral',
-      report.timeBelowThresholdMs > 0
-        ? formatDuration(report.timeBelowThresholdMs)
-        : '—',
-    ],
-    [
-      'Eventos',
-      report.eventCount === 0
-        ? 'Ninguno'
-        : `⚠️ ${report.bradycardiaCount} bradicardia · ${report.pauseCount} pausa${
-            report.pauseCount === 1 ? '' : 's'
-          }`,
-    ],
-    [
-      'Pausa más larga',
-      report.longestPauseMs !== null ? `${report.longestPauseMs} ms` : '—',
-    ],
-  ];
+  const coveragePct =
+    report.durationMs > 0
+      ? Math.min(
+          100,
+          Math.round((report.readingsCount / (report.durationMs / 1000)) * 100),
+        )
+      : 0;
+
+  const toggleExpand = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && chart === null && report.readingsCount > 0) {
+      const end = session.endedAt ?? report.windowEnd;
+      loadChart(session.id, session.startedAt, end, thresholds)
+        .then(setChart)
+        .catch(() => setChart([]));
+    }
+  };
 
   return (
     <Pressable
-      onPress={hasEvents ? () => setExpanded((v) => !v) : undefined}
+      onPress={toggleExpand}
       style={({ pressed }) => [
         styles.card,
         hasEvents && styles.cardWithEvents,
         { backgroundColor: theme.backgroundElement },
-        pressed && hasEvents && { opacity: 0.8 },
+        pressed && { opacity: 0.8 },
       ]}>
       <ThemedView style={styles.cardHeader}>
         <ThemedText type="smallBold" style={styles.cardTitle}>
@@ -125,26 +174,85 @@ function ReportCard({ item }: { item: SessionWithReport }) {
           Sin lecturas registradas.
         </ThemedText>
       ) : (
-        metrics.map(([label, value]) => (
-          <ThemedView key={label} style={styles.metricRow}>
+        <>
+          <View style={styles.statsRow}>
+            <StatBlock
+              label="MÍN"
+              value={report.minBpm !== null ? String(report.minBpm) : '—'}
+              color="#E5484D"
+            />
+            <StatBlock
+              label="MEDIA"
+              value={report.avgBpm !== null ? String(report.avgBpm) : '—'}
+            />
+            <StatBlock
+              label="MÁX"
+              value={report.maxBpm !== null ? String(report.maxBpm) : '—'}
+            />
+            <StatBlock
+              label="DURACIÓN"
+              value={formatDuration(report.durationMs)}
+            />
+          </View>
+          <View style={styles.subRow}>
             <ThemedText type="small" themeColor="textSecondary">
-              {label}
+              {report.timeBelowThresholdMs > 0
+                ? `${formatDuration(report.timeBelowThresholdMs)} bajo umbral`
+                : 'sin tiempo bajo umbral'}
+              {' · '}
+              {coveragePct}% cobertura
             </ThemedText>
-            <ThemedText type="small">{value}</ThemedText>
-          </ThemedView>
-        ))
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              style={{ color: hasEvents ? '#E5484D' : '#2E7D32' }}>
+              {hasEvents
+                ? `⚠️ ${report.eventCount} evento${report.eventCount === 1 ? '' : 's'}`
+                : '✓ sin eventos'}
+            </ThemedText>
+          </View>
+        </>
       )}
-      {hasEvents && (
-        <ThemedText type="small" themeColor="textSecondary">
-          {expanded ? '▲ Ocultar eventos' : '▼ Ver eventos'}
-        </ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        {expanded ? '▲ Ocultar' : '▼ Ver gráfica'}
+      </ThemedText>
+      {expanded && (
+        <>
+          {chart === null ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              Cargando gráfica…
+            </ThemedText>
+          ) : chart.length === 0 ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              Sin datos para graficar.
+            </ThemedText>
+          ) : (
+            <HrChart
+              buckets={chart}
+              eventMarks={eventBucketIndices(
+                events,
+                session.startedAt,
+                session.endedAt ?? report.windowEnd,
+                CHART_BUCKETS,
+              )}
+              thresholdBpm={activeLowThreshold(
+                thresholds,
+                new Date(session.startedAt),
+              )}
+              height={96}
+            />
+          )}
+          {events.length > 0 && (
+            <View style={styles.eventList}>
+              {events.map((e, i) => (
+                <ThemedText key={i} type="small">
+                  {e.type === 'pause' ? '⏸' : '⚠️'} {eventLine(e)}
+                </ThemedText>
+              ))}
+            </View>
+          )}
+        </>
       )}
-      {expanded &&
-        events.map((e, i) => (
-          <ThemedText key={i} type="small">
-            {e.type === 'pause' ? '⏸' : '⚠️'} {eventLine(e)}
-          </ThemedText>
-        ))}
     </Pressable>
   );
 }
@@ -178,44 +286,40 @@ function WeeklyCard({ weekly }: { weekly: WeeklyReport }) {
           cubiertas
         </ThemedText>
       </ThemedView>
-      <ThemedView style={styles.metricRow}>
+      <View style={styles.statsRow}>
+        <StatBlock
+          label="MÍN"
+          value={weekly.minBpm !== null ? String(weekly.minBpm) : '—'}
+          color="#E5484D"
+        />
+        <StatBlock
+          label="MEDIA"
+          value={weekly.avgBpm !== null ? String(weekly.avgBpm) : '—'}
+        />
+        <StatBlock
+          label="MÁX"
+          value={weekly.maxBpm !== null ? String(weekly.maxBpm) : '—'}
+        />
+        <StatBlock
+          label="TOTAL"
+          value={formatDuration(weekly.totalMonitoredMs)}
+        />
+      </View>
+      <View style={styles.subRow}>
         <ThemedText type="small" themeColor="textSecondary">
-          Tiempo monitorizado
-        </ThemedText>
-        <ThemedText type="small">
-          {formatDuration(weekly.totalMonitoredMs)}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.metricRow}>
-        <ThemedText type="small" themeColor="textSecondary">
-          FC media (min–máx)
-        </ThemedText>
-        <ThemedText type="small">
-          {weekly.avgBpm !== null
-            ? `${weekly.avgBpm} bpm (${weekly.minBpm}–${weekly.maxBpm})`
-            : '—'}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.metricRow}>
-        <ThemedText type="small" themeColor="textSecondary">
-          Bajo umbral
-        </ThemedText>
-        <ThemedText type="small">
           {weekly.timeBelowThresholdMs > 0
-            ? formatDuration(weekly.timeBelowThresholdMs)
-            : '—'}
+            ? `${formatDuration(weekly.timeBelowThresholdMs)} bajo umbral`
+            : 'sin tiempo bajo umbral'}
         </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.metricRow}>
-        <ThemedText type="small" themeColor="textSecondary">
-          Eventos
-        </ThemedText>
-        <ThemedText type="small">
+        <ThemedText
+          type="small"
+          themeColor="textSecondary"
+          style={{ color: weekly.eventCount > 0 ? '#E5484D' : '#2E7D32' }}>
           {weekly.eventCount === 0
-            ? 'Ninguno'
-            : `${weekly.eventCount} (${weekly.bradycardiaCount} bradicardia · ${weekly.pauseCount} pausa)`}
+            ? '✓ sin eventos'
+            : `⚠️ ${weekly.eventCount} (${weekly.bradycardiaCount} bradicardia · ${weekly.pauseCount} pausa)`}
         </ThemedText>
-      </ThemedView>
+      </View>
       <Pressable
         onPress={exportPdf}
         disabled={exporting || weekly.sessionsCount === 0}
@@ -305,7 +409,9 @@ export default function ReportsScreen() {
                 : 'Aún no hay sesiones. El informe aparece al terminar de monitorizar.'}
             </ThemedText>
           }
-          renderItem={({ item }) => <ReportCard item={item} />}
+          renderItem={({ item }) => (
+            <ReportCard item={item} thresholds={thresholds} />
+          )}
         />
       </SafeAreaView>
     </ThemedView>
@@ -341,6 +447,21 @@ const styles = StyleSheet.create({
   },
   cardHeader: { gap: Spacing.half },
   cardTitle: { fontSize: 16 },
+  statsRow: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    paddingVertical: Spacing.one,
+  },
+  statBlock: { flex: 1, alignItems: 'center', gap: 2 },
+  statValue: { fontSize: 24, fontWeight: 700 },
+  subRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: Spacing.one,
+  },
+  eventList: { gap: 4, paddingTop: Spacing.one },
   metricRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

@@ -57,6 +57,10 @@ interface MonitorState {
   source: SensorSource | null;
   sensorLabel: string | null;
   currentReading: HRReading | null;
+  /** Rolling window of the latest readings — feeds the live sparkline. */
+  recentReadings: HRReading[];
+  sessionMinBpm: number | null;
+  sessionMaxBpm: number | null;
   lastEvent: AlertEvent | null;
   eventCount: number;
   thresholds: ThresholdProfile;
@@ -163,6 +167,15 @@ export const useMonitorStore = create<MonitorState>()(
 
         set((s) => ({
           currentReading: reading,
+          recentReadings: [...s.recentReadings, reading].slice(-120),
+          sessionMinBpm:
+            s.sessionMinBpm === null
+              ? reading.bpm
+              : Math.min(s.sessionMinBpm, reading.bpm),
+          sessionMaxBpm:
+            s.sessionMaxBpm === null
+              ? reading.bpm
+              : Math.max(s.sessionMaxBpm, reading.bpm),
           lastEvent: detected.at(-1) ?? s.lastEvent,
           eventCount: s.eventCount + detected.length,
         }));
@@ -395,6 +408,9 @@ export const useMonitorStore = create<MonitorState>()(
         set({
           eventCount: 0,
           currentReading: null,
+          recentReadings: [],
+          sessionMinBpm: null,
+          sessionMaxBpm: null,
           monitoringIntent: true,
           reconnectAttempt: 0,
         });
@@ -406,6 +422,9 @@ export const useMonitorStore = create<MonitorState>()(
         source: null,
         sensorLabel: null,
         currentReading: null,
+        recentReadings: [],
+        sessionMinBpm: null,
+        sessionMaxBpm: null,
         lastEvent: null,
         eventCount: 0,
         thresholds: DEFAULT_THRESHOLDS,

@@ -78,8 +78,8 @@ function HealthConnectCard() {
   };
 
   return (
-    <ThemedView style={styles.field}>
-      <ThemedText type="smallBold">Health Connect</ThemedText>
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedText type="smallBold">🩺 Health Connect</ThemedText>
       <ThemedText type="small" themeColor="textSecondary">
         {status === null ? 'Comprobando…' : HC_STATUS_LABELS[status]}
         {healthConnectEnabled
@@ -287,8 +287,8 @@ function BackupCard() {
   };
 
   return (
-    <ThemedView style={styles.field}>
-      <ThemedText type="smallBold">Copia de seguridad</ThemedText>
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedText type="smallBold">💾 Copia de seguridad</ThemedText>
       <ThemedText type="small" themeColor="textSecondary">
         Copia automática de Android: activa
         {lastBackupExportAt
@@ -396,82 +396,89 @@ export default function SettingsScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}>
           <ThemedText type="subtitle" style={styles.title}>
-            Umbrales de alerta
+            Ajustes
           </ThemedText>
 
-        {[
-          {
-            label: 'FC mínima diurna (bpm)',
-            value: dayLow,
-            setter: setDayLow,
-            hint: 'Despierto: alerta si baja de este valor',
-          },
-          {
-            label: 'FC mínima nocturna (bpm)',
-            value: nightLow,
-            setter: setNightLow,
-            hint: '23:00–07:00 · en sueño es normal latir más lento',
-          },
-          {
-            label: 'Tiempo sostenido (s)',
-            value: sustained,
-            setter: setSustained,
-            hint: 'Segundos bajo el umbral antes de alertar',
-          },
-        ].map(({ label, value, setter, hint }) => (
-          <ThemedView key={label} style={styles.field}>
-            <ThemedText type="smallBold">{label}</ThemedText>
-            <TextInput
-              value={value}
-              onChangeText={setter}
-              keyboardType="number-pad"
-              style={[
-                styles.input,
-                { color: theme.text, borderColor: theme.backgroundSelected },
-              ]}
-            />
-            <ThemedText type="small" themeColor="textSecondary">
-              {hint}
-            </ThemedText>
-          </ThemedView>
-        ))}
-
-        <Pressable
-          onPress={save}
-          style={[styles.button, { backgroundColor: '#2E7D32' }]}>
-          <ThemedText type="smallBold" style={styles.buttonText}>
-            {saved ? 'Guardado ✓' : 'Guardar'}
-          </ThemedText>
-        </Pressable>
-
-        {Platform.OS === 'android' && <HealthConnectCard />}
-
-        {Platform.OS === 'android' && <BackupCard />}
-
-        {Platform.OS === 'android' && (
-          <ThemedView style={styles.field}>
-            <ThemedText type="smallBold">Monitorización nocturna</ThemedText>
+          <ThemedView type="backgroundElement" style={styles.card}>
+            <ThemedText type="smallBold">⚙️ Umbrales de alerta</ThemedText>
+            {[
+              {
+                label: 'FC mínima diurna',
+                value: dayLow,
+                setter: setDayLow,
+                hint: 'Despierto: alerta si baja de este valor',
+              },
+              {
+                label: 'FC mínima nocturna',
+                value: nightLow,
+                setter: setNightLow,
+                hint: '23:00–07:00 · en sueño es normal latir más lento',
+              },
+              {
+                label: 'Tiempo sostenido (s)',
+                value: sustained,
+                setter: setSustained,
+                hint: 'Segundos bajo el umbral antes de alertar',
+              },
+            ].map(({ label, value, setter, hint }) => (
+              <ThemedView key={label} style={styles.inputRow}>
+                <ThemedView style={styles.inputLabel}>
+                  <ThemedText type="smallBold">{label}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {hint}
+                  </ThemedText>
+                </ThemedView>
+                <TextInput
+                  value={value}
+                  onChangeText={setter}
+                  keyboardType="number-pad"
+                  style={[
+                    styles.input,
+                    {
+                      color: theme.text,
+                      borderColor: theme.backgroundSelected,
+                    },
+                  ]}
+                />
+              </ThemedView>
+            ))}
             <Pressable
-              onPress={() =>
-                IntentLauncher.startActivityAsync(
-                  IntentLauncher.ActivityAction
-                    .IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
-                ).catch(() => {})
-              }
-              style={[
-                styles.button,
-                { backgroundColor: theme.backgroundElement },
-              ]}>
-              <ThemedText type="smallBold">
-                Desactivar optimización de batería
+              onPress={save}
+              style={[styles.button, { backgroundColor: '#2E7D32' }]}>
+              <ThemedText type="smallBold" style={styles.buttonText}>
+                {saved ? 'Guardado ✓' : 'Guardar umbrales'}
               </ThemedText>
             </Pressable>
-            <ThemedText type="small" themeColor="textSecondary">
-              Si el sistema mata la app por la noche, exclúyela de la
-              optimización en los ajustes que se abren con este botón.
-            </ThemedText>
           </ThemedView>
-        )}
+
+          {Platform.OS === 'android' && <HealthConnectCard />}
+
+          {Platform.OS === 'android' && <BackupCard />}
+
+          {Platform.OS === 'android' && (
+            <ThemedView type="backgroundElement" style={styles.card}>
+              <ThemedText type="smallBold">🌙 Monitorización nocturna</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Si el sistema mata la app por la noche, exclúyela de la
+                optimización en los ajustes que se abren con este botón.
+              </ThemedText>
+              <Pressable
+                onPress={() =>
+                  IntentLauncher.startActivityAsync(
+                    IntentLauncher.ActivityAction
+                      .IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+                  ).catch(() => {})
+                }
+                style={[
+                  styles.button,
+                  { backgroundColor: theme.backgroundElement },
+                ]}>
+                <ThemedText type="smallBold">
+                  Desactivar optimización de batería
+                </ThemedText>
+              </Pressable>
+            </ThemedView>
+          )}
 
           <ThemedText
             type="small"
@@ -501,13 +508,25 @@ const styles = StyleSheet.create({
     gap: Spacing.four,
   },
   title: { paddingVertical: Spacing.three },
-  field: { gap: Spacing.one },
+  card: {
+    borderRadius: Spacing.three,
+    padding: Spacing.three,
+    gap: Spacing.two,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  inputLabel: { flex: 1, gap: 2 },
   input: {
+    width: 90,
     borderWidth: 1,
     borderRadius: Spacing.two,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     fontSize: 18,
+    textAlign: 'center',
   },
   button: {
     borderRadius: Spacing.three,

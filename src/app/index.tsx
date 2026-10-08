@@ -6,9 +6,13 @@ import {
     useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
+import { HrChart } from '@/components/hr-chart';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { bucketSeries, computeTrend } from '@/domain/hrChart';
+import { formatDuration } from '@/domain/morningReport';
+import { activeLowThreshold } from '@/domain/thresholds';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -36,6 +40,11 @@ export default function MonitorScreen() {
   const {
     connectionState,
     currentReading,
+    recentReadings,
+    sessionMinBpm,
+    sessionMaxBpm,
+    sessionStartedAt,
+    thresholds,
     lastEvent,
     eventCount,
     sensorLabel,
@@ -60,6 +69,25 @@ export default function MonitorScreen() {
   }, [streaming]);
   const staleData =
     streaming && (!currentReading || now - currentReading.timestamp > 8_000);
+
+  const activeThreshold = activeLowThreshold(thresholds, new Date(now));
+  const currentBpm = currentReading?.bpm;
+  const belowThreshold =
+    currentBpm !== undefined && currentBpm < activeThreshold;
+  const trend = computeTrend(recentReadings);
+  const trendGlyph =
+    trend === 'rising' ? '↗' : trend === 'falling' ? '↘' : '→';
+
+  const liveBuckets =
+    recentReadings.length >= 2
+      ? bucketSeries(
+          recentReadings,
+          recentReadings[0].timestamp,
+          now,
+          60,
+          thresholds,
+        )
+      : [];
 
   const [pulse] = useState(() => new Animated.Value(1));
   const liveBpm = currentReading?.bpm ?? 60;
@@ -171,13 +199,39 @@ export default function MonitorScreen() {
             style={[styles.heart, { transform: [{ scale: pulse }] }]}>
             ❤️
           </Animated.Text>
-          <ThemedText style={styles.bpm}>
+          <ThemedText
+            style={[
+              styles.bpm,
+              { color: belowThreshold ? '#E5484D' : theme.text },
+            ]}>
             {currentReading ? currentReading.bpm : '--'}
+            {streaming && currentReading ? (
+              <ThemedText style={styles.trend}> {trendGlyph}</ThemedText>
+            ) : null}
           </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            bpm · eventos esta sesión: {eventCount}
+            bpm · umbral {activeThreshold} · eventos: {eventCount}
           </ThemedText>
+          {streaming && sessionStartedAt && (
+            <ThemedText type="small" themeColor="textSecondary">
+              {formatDuration(now - sessionStartedAt)} monitorizando
+              {sessionMinBpm !== null && sessionMaxBpm !== null
+                ? ` · mín ${sessionMinBpm} · máx ${sessionMaxBpm}`
+                : ''}
+            </ThemedText>
+          )}
         </ThemedView>
+
+        {liveBuckets.length > 1 && (
+          <ThemedView style={styles.sparkline}>
+            <HrChart
+              buckets={liveBuckets}
+              thresholdBpm={activeThreshold}
+              height={56}
+              compact
+            />
+          </ThemedView>
+        )}
 
         {lastEvent && (
           <ThemedView type="backgroundElement" style={styles.alertBox}>
@@ -356,6 +410,8 @@ const styles = StyleSheet.create({
   spacer: { flex: 1 },
   heart: { fontSize: 60 },
   bpm: { fontSize: 80, fontWeight: 700, lineHeight: 88 },
+  trend: { fontSize: 40, fontWeight: 400 },
+  sparkline: { alignSelf: 'stretch', paddingHorizontal: Spacing.two },
   alertBox: {
     alignSelf: 'stretch',
     borderRadius: Spacing.three,

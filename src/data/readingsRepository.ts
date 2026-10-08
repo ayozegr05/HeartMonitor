@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, lte } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm';
 
 import type { AlertEvent, HRReading } from '@/domain/models';
 
@@ -112,6 +112,39 @@ export async function getSessionReadings(sessionId: number) {
     .from(readings)
     .where(eq(readings.sessionId, sessionId))
     .orderBy(readings.timestamp);
+}
+
+export interface ReadingBucketRow {
+  bucket: number;
+  minBpm: number;
+  avgBpm: number;
+  maxBpm: number;
+  count: number;
+}
+
+/**
+ * HR series pre-aggregated in SQL for charts: one row per `bucketMs` slice.
+ * Fetching ~100 aggregated rows instead of ~30k raw readings keeps the
+ * Informes cards cheap even after months of overnight sessions.
+ */
+export async function getSessionReadingBuckets(
+  sessionId: number,
+  windowStart: number,
+  bucketMs: number,
+): Promise<ReadingBucketRow[]> {
+  const rows = await getDb().all(sql`
+    SELECT
+      CAST((${readings.timestamp} - ${windowStart}) / ${bucketMs} AS INTEGER) AS bucket,
+      MIN(${readings.bpm}) AS minBpm,
+      AVG(${readings.bpm}) AS avgBpm,
+      MAX(${readings.bpm}) AS maxBpm,
+      COUNT(*) AS count
+    FROM ${readings}
+    WHERE ${readings.sessionId} = ${sessionId}
+    GROUP BY bucket
+    ORDER BY bucket
+  `);
+  return rows as ReadingBucketRow[];
 }
 
 export async function getSessionEvents(sessionId: number) {
