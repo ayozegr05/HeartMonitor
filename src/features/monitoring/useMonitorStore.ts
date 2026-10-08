@@ -2,48 +2,47 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
+import {
+    endSession,
+    getSessionAlertEvents,
+    getSessionReadings,
+    saveEvent,
+    saveReading,
+    startSession,
+} from '@/data/readingsRepository';
 import { BradycardiaDetector } from '@/domain/bradycardia';
 import {
-  DEFAULT_THRESHOLDS,
-  type AlertEvent,
-  type HRReading,
-  type ThresholdProfile,
+    DEFAULT_THRESHOLDS,
+    type AlertEvent,
+    type HRReading,
+    type ThresholdProfile,
 } from '@/domain/models';
 import {
-  buildSessionReport,
-  formatReportSummary,
+    buildSessionReport,
+    formatReportSummary,
 } from '@/domain/morningReport';
 import { PauseDetector } from '@/domain/pauseDetection';
 import { reconnectDelayMs } from '@/domain/reconnect';
 import {
-  activeLowThreshold,
-  isNightTime,
-  SLEEP_END_HOUR,
+    activeLowThreshold,
+    isNightTime,
+    SLEEP_END_HOUR,
 } from '@/domain/thresholds';
-import { getBleManager } from '@/sensors/bleManager';
-import { BleHeartRateSensor } from '@/sensors/BleHeartRateSensor';
+import { syncReadingsToHealthConnect } from '@/features/healthconnect/healthConnectSync';
 import {
-  MockHeartRateSensor,
-  type MockScenario,
+    startMonitoringService,
+    stopMonitoringService,
+} from '@/features/monitoring/foregroundService';
+import { BleHeartRateSensor } from '@/sensors/BleHeartRateSensor';
+import { getBleManager } from '@/sensors/bleManager';
+import {
+    MockHeartRateSensor,
+    type MockScenario,
 } from '@/sensors/MockHeartRateSensor';
 import type {
-  IHeartRateSensor,
-  SensorConnectionState,
+    IHeartRateSensor,
+    SensorConnectionState,
 } from '@/sensors/types';
-import {
-  endSession,
-  getSessionAlertEvents,
-  getSessionReadings,
-  saveEvent,
-  saveReading,
-  startSession,
-} from '@/data/readingsRepository';
-import {
-  startMonitoringService,
-  stopMonitoringService,
-  updateMonitoringNotification,
-} from '@/features/monitoring/foregroundService';
-import { syncReadingsToHealthConnect } from '@/features/healthconnect/healthConnectSync';
 import { fireAlert } from '@/shared/notifications';
 
 type SensorSource = 'mock' | 'ble';
@@ -163,7 +162,6 @@ export const useMonitorStore = create<MonitorState>()(
 
         // Side effects — persisted + alerted, never blocking the stream.
         void saveReading(reading, label, get().sessionId).catch(console.warn);
-        void updateMonitoringNotification(reading.bpm).catch(() => {});
         for (const event of detected) {
           void saveEvent(event, get().sessionId).catch(console.warn);
           const body =
