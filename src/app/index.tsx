@@ -1,5 +1,5 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Animated, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -47,21 +47,23 @@ export default function MonitorScreen() {
 
   const [pulse] = useState(() => new Animated.Value(1));
   const liveBpm = currentReading?.bpm ?? 60;
-  const beatMsRef = useRef(0);
+  const [beatMs, setBeatMs] = useState(1000);
+
+  // Re-time the beat only when the period truly shifts. Returning the
+  // same beatMs makes React skip the render entirely, so the loop below
+  // is never torn down by ordinary 1 Hz bpm jitter mid-cycle.
+  useEffect(() => {
+    const target = Math.max(300, 60_000 / Math.max(30, liveBpm));
+    setBeatMs((prev) =>
+      Math.abs(target - prev) / prev < 0.12 ? prev : target,
+    );
+  }, [liveBpm]);
 
   useEffect(() => {
     if (!streaming) {
       pulse.setValue(1);
-      beatMsRef.current = 0;
       return;
     }
-    // The heart beats at the measured rate. Readings arrive ~1 Hz, so a
-    // slow pulse (38 bpm ≈ 1.6 s) would restart on every jittered bpm and
-    // never finish a cycle — only re-time it when the period truly moves.
-    const beatMs = Math.max(300, 60_000 / Math.max(30, liveBpm));
-    const prev = beatMsRef.current;
-    if (prev > 0 && Math.abs(beatMs - prev) / prev < 0.12) return;
-    beatMsRef.current = beatMs;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
@@ -78,7 +80,7 @@ export default function MonitorScreen() {
     );
     loop.start();
     return () => loop.stop();
-  }, [streaming, liveBpm, pulse]);
+  }, [streaming, beatMs, pulse]);
 
   useEffect(() => {
     if (streaming) {
@@ -133,17 +135,13 @@ export default function MonitorScreen() {
               : ''}
             {sensorLabel ? ` · ${sensorLabel}` : ''}
           </ThemedText>
-          <ThemedView style={styles.bpmRow}>
-            {streaming && (
-              <Animated.Text
-                style={[styles.heart, { transform: [{ scale: pulse }] }]}>
-                ❤️
-              </Animated.Text>
-            )}
-            <ThemedText style={styles.bpm}>
-              {currentReading ? currentReading.bpm : '--'}
-            </ThemedText>
-          </ThemedView>
+          <Animated.Text
+            style={[styles.heart, { transform: [{ scale: pulse }] }]}>
+            ❤️
+          </Animated.Text>
+          <ThemedText style={styles.bpm}>
+            {currentReading ? currentReading.bpm : '--'}
+          </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             bpm · eventos esta sesión: {eventCount}
           </ThemedText>
@@ -275,8 +273,7 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   hero: { alignItems: 'center', gap: Spacing.one, flex: 1, justifyContent: 'center' },
-  bpmRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  heart: { fontSize: 56 },
+  heart: { fontSize: 72 },
   bpm: { fontSize: 96, fontWeight: 700, lineHeight: 104 },
   alertBox: {
     alignSelf: 'stretch',

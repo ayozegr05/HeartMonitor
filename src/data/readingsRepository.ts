@@ -1,4 +1,4 @@
-import { desc, eq, gte } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, lte } from 'drizzle-orm';
 
 import type { AlertEvent, HRReading } from '@/domain/models';
 
@@ -120,6 +120,54 @@ export async function getSessionEvents(sessionId: number) {
     .from(events)
     .where(eq(events.sessionId, sessionId))
     .orderBy(events.timestamp);
+}
+
+/** Readings not attached to any session — restore session-rebuild source. */
+export async function getSessionlessReadings(source?: string) {
+  const conditions = source
+    ? and(isNull(readings.sessionId), eq(readings.source, source))
+    : isNull(readings.sessionId);
+  return getDb()
+    .select()
+    .from(readings)
+    .where(conditions)
+    .orderBy(readings.timestamp);
+}
+
+/** Attaches all session-less readings in [fromTs, toTs] to a session. */
+export async function assignReadingsToSession(
+  sessionId: number,
+  fromTs: number,
+  toTs: number,
+): Promise<void> {
+  await getDb()
+    .update(readings)
+    .set({ sessionId })
+    .where(
+      and(
+        isNull(readings.sessionId),
+        gte(readings.timestamp, fromTs),
+        lte(readings.timestamp, toTs),
+      ),
+    );
+}
+
+/** Attaches all session-less events in [fromTs, toTs] to a session. */
+export async function assignEventsToSession(
+  sessionId: number,
+  fromTs: number,
+  toTs: number,
+): Promise<void> {
+  await getDb()
+    .update(events)
+    .set({ sessionId })
+    .where(
+      and(
+        isNull(events.sessionId),
+        gte(events.timestamp, fromTs),
+        lte(events.timestamp, toTs),
+      ),
+    );
 }
 
 /** Full-table reads for the manual backup export. */

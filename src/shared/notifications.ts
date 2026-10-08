@@ -45,7 +45,9 @@ export async function fireAlert(title: string, body: string): Promise<void> {
     content: {
       title,
       body,
-      sound: 'default',
+      // No `sound` here — content.sound means a bundled custom file and
+      // expo-notifications errors looking for 'default' in dev builds.
+      // The channel already carries the default alert sound.
       ...(Platform.OS === 'android' ? { channelId: ALERT_CHANNEL_ID } : {}),
     },
     trigger: null,
