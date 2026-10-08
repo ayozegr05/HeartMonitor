@@ -123,7 +123,9 @@ export default function MonitorScreen() {
         {/* Big live BPM readout */}
         <ThemedView style={styles.hero}>
           <ThemedText type="small" themeColor="textSecondary">
-            {STATE_LABELS[connectionState]}
+            {streaming && !currentReading
+              ? 'Conectado — esperando FC'
+              : STATE_LABELS[connectionState]}
             {connectionState === 'reconnecting' && reconnectAttempt > 0
               ? ` (intento ${reconnectAttempt})`
               : ''}
@@ -215,6 +217,11 @@ export default function MonitorScreen() {
                     ? `Reconectando a ${bleDevice.label}…`
                     : `✓ ${bleDevice.label} conectado`}
                 </ThemedText>
+                {streaming && !currentReading && (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Esperando datos — activa «Emitir FC» en el reloj
+                  </ThemedText>
+                )}
               </ThemedView>
             ) : null}
             <Pressable
@@ -294,14 +301,21 @@ const styles = StyleSheet.create({
     paddingBottom: BottomTabInset + Spacing.three,
     gap: Spacing.three,
   },
-  hero: { alignItems: 'center', gap: Spacing.one, flex: 1, justifyContent: 'center' },
-  heart: { fontSize: 72 },
-  bpm: { fontSize: 96, fontWeight: 700, lineHeight: 104 },
+  hero: {
+    alignItems: 'center',
+    gap: Spacing.one,
+    flex: 1,
+    justifyContent: 'center',
+    paddingVertical: Spacing.two,
+  },
+  heart: { fontSize: 60 },
+  bpm: { fontSize: 80, fontWeight: 700, lineHeight: 88 },
   alertBox: {
     alignSelf: 'stretch',
     borderRadius: Spacing.three,
     padding: Spacing.three,
     gap: Spacing.half,
+    marginTop: Spacing.two,
   },
   row: { flexDirection: 'row', gap: Spacing.two },
   chip: {
