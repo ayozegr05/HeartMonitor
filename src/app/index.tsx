@@ -1,6 +1,6 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { useEffect, useState } from 'react';
-import { FlatList, Pressable, StyleSheet } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -44,6 +44,34 @@ export default function MonitorScreen() {
   } = useMonitorStore();
 
   const streaming = connectionState === 'streaming';
+
+  const pulse = useRef(new Animated.Value(1)).current;
+  const liveBpm = currentReading?.bpm ?? 60;
+
+  useEffect(() => {
+    if (!streaming) {
+      pulse.setValue(1);
+      return;
+    }
+    // The heart beats at the measured rate — every new reading re-times it.
+    const beatMs = Math.max(300, 60_000 / Math.max(30, liveBpm));
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1.3,
+          duration: beatMs * 0.2,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: beatMs * 0.8,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [streaming, liveBpm, pulse]);
 
   useEffect(() => {
     if (streaming) {
@@ -98,9 +126,17 @@ export default function MonitorScreen() {
               : ''}
             {sensorLabel ? ` · ${sensorLabel}` : ''}
           </ThemedText>
-          <ThemedText style={styles.bpm}>
-            {currentReading ? currentReading.bpm : '--'}
-          </ThemedText>
+          <ThemedView style={styles.bpmRow}>
+            {streaming && (
+              <Animated.Text
+                style={[styles.heart, { transform: [{ scale: pulse }] }]}>
+                ❤️
+              </Animated.Text>
+            )}
+            <ThemedText style={styles.bpm}>
+              {currentReading ? currentReading.bpm : '--'}
+            </ThemedText>
+          </ThemedView>
           <ThemedText type="small" themeColor="textSecondary">
             bpm · eventos esta sesión: {eventCount}
           </ThemedText>
@@ -232,6 +268,8 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   hero: { alignItems: 'center', gap: Spacing.one, flex: 1, justifyContent: 'center' },
+  bpmRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  heart: { fontSize: 56 },
   bpm: { fontSize: 96, fontWeight: 700, lineHeight: 104 },
   alertBox: {
     alignSelf: 'stretch',
