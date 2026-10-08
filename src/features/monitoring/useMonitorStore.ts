@@ -246,6 +246,11 @@ export const useMonitorStore = create<MonitorState>()(
               disconnectAlertTimer = null;
             }
             disconnectAlerted = false;
+            // Arm the data watchdog on (re)connect too — a link that
+            // reconnects but delivers nothing would otherwise stay
+            // unwatched until the first reading ever arrives.
+            staleDataAlerted = false;
+            armStaleWatchdog();
           }
           // A drop is not a stop: keep the session alive and retry the link.
           if (
