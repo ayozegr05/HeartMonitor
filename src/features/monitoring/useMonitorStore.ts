@@ -249,8 +249,11 @@ export const useMonitorStore = create<MonitorState>()(
       };
 
       const attemptReconnect = async (): Promise<void> => {
-        const { monitoringIntent, bleDevice, reconnectAttempt } = get();
-        if (!monitoringIntent || !bleDevice) return;
+        const { monitoringIntent, bleDevice, reconnectAttempt, source } =
+          get();
+        // Only a BLE session may be reconnected — a mock run shares
+        // monitoringIntent but must never wake the watch.
+        if (!monitoringIntent || !bleDevice || source !== 'ble') return;
         try {
           await detachSensor();
           await connectBle(bleDevice.id);
@@ -342,6 +345,11 @@ export const useMonitorStore = create<MonitorState>()(
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
         }
+        if (disconnectAlertTimer) {
+          clearTimeout(disconnectAlertTimer);
+          disconnectAlertTimer = null;
+        }
+        disconnectAlerted = false;
         await detachSensor();
         bradycardia = new BradycardiaDetector(get().thresholds.sustainedMs);
         pause = new PauseDetector(get().thresholds.pauseRrMultiplier);
@@ -402,9 +410,18 @@ export const useMonitorStore = create<MonitorState>()(
         },
 
         resumeBleSession: async () => {
-          const { monitoringIntent, bleDevice, connectionState, sessionId } =
-            get();
-          if (monitoringIntent && !bleDevice && sessionId != null) {
+          const {
+            monitoringIntent,
+            bleDevice,
+            connectionState,
+            sessionId,
+            source,
+          } = get();
+          if (
+            monitoringIntent &&
+            sessionId != null &&
+            (!bleDevice || source !== 'ble')
+          ) {
             // Only BLE sessions survive process death — a mock run that lost
             // its process can't resume, so close it at its last reading
             // instead of showing "Monitorizando" forever.
@@ -527,6 +544,7 @@ export const useMonitorStore = create<MonitorState>()(
         thresholds: s.thresholds,
         bleDevice: s.bleDevice,
         monitoringIntent: s.monitoringIntent,
+        source: s.source,
         sessionId: s.sessionId,
         sessionStartedAt: s.sessionStartedAt,
         lastReportedAt: s.lastReportedAt,
