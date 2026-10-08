@@ -111,6 +111,8 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reportTimer: ReturnType<typeof setTimeout> | null = null;
 let disconnectAlertTimer: ReturnType<typeof setTimeout> | null = null;
 let disconnectAlerted = false;
+let staleDataTimer: ReturnType<typeof setTimeout> | null = null;
+let staleDataAlerted = false;
 
 /** Skip the morning notification for trivially short coverage (~5 min @1Hz). */
 const MIN_REPORT_READINGS = 300;
@@ -140,6 +142,8 @@ export const useMonitorStore = create<MonitorState>()(
   persist(
     (set, get) => {
       const handleReading = (reading: HRReading): void => {
+        staleDataAlerted = false;
+        armStaleWatchdog();
         const { thresholds } = get();
         const label = sensor?.label ?? 'unknown';
         const detected: AlertEvent[] = [];
@@ -183,8 +187,34 @@ export const useMonitorStore = create<MonitorState>()(
         }
       };
 
+      const armStaleWatchdog = (): void => {
+        if (staleDataTimer) clearTimeout(staleDataTimer);
+        staleDataTimer = setTimeout(() => {
+          staleDataTimer = null;
+          // A live link that delivers nothing is an outage too — the watch
+          // can stay connected while its broadcast sleeps.
+          if (!get().monitoringIntent || staleDataAlerted) return;
+          staleDataAlerted = true;
+          void fireAlert(
+            '⌚ Reloj sin datos',
+            'Conectado pero sin datos — revisa «Emitir FC» en el reloj',
+          ).catch(console.warn);
+        }, DISCONNECT_ALERT_MS);
+      };
+
+      const clearStaleWatchdog = (): void => {
+        if (staleDataTimer) {
+          clearTimeout(staleDataTimer);
+          staleDataTimer = null;
+        }
+        staleDataAlerted = false;
+      };
+
       const scheduleReconnect = (): void => {
         if (reconnectTimer) return;
+        // The link-drop alert below covers this outage — silence the
+        // data watchdog so the two never double-notify.
+        clearStaleWatchdog();
         const delay = reconnectDelayMs(get().reconnectAttempt);
         set({ connectionState: 'reconnecting' });
         reconnectTimer = setTimeout(() => {
@@ -350,6 +380,7 @@ export const useMonitorStore = create<MonitorState>()(
           disconnectAlertTimer = null;
         }
         disconnectAlerted = false;
+        clearStaleWatchdog();
         await detachSensor();
         bradycardia = new BradycardiaDetector(get().thresholds.sustainedMs);
         pause = new PauseDetector(get().thresholds.pauseRrMultiplier);
@@ -503,6 +534,7 @@ export const useMonitorStore = create<MonitorState>()(
             disconnectAlertTimer = null;
           }
           disconnectAlerted = false;
+          clearStaleWatchdog();
           const { sessionId } = get();
           if (sessionId != null) {
             void endSession(sessionId, Date.now()).catch(console.warn);
