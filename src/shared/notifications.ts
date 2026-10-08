@@ -1,5 +1,5 @@
-import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 
 const ALERT_CHANNEL_ID = 'heart-alerts';
 
@@ -24,11 +24,11 @@ export function configureNotificationHandler(): void {
  */
 export async function ensureNotificationSetup(): Promise<boolean> {
   if (Platform.OS === 'android') {
+    await Notifications.deleteNotificationChannelAsync(ALERT_CHANNEL_ID);
     await Notifications.setNotificationChannelAsync(ALERT_CHANNEL_ID, {
       name: 'Alertas cardíacas',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 500, 250, 500],
-      sound: 'default',
       bypassDnd: true,
       lockscreenVisibility:
         Notifications.AndroidNotificationVisibility.PUBLIC,
