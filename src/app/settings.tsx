@@ -235,7 +235,8 @@ function BackupCard() {
       const res = await importBackupFromUri(uri);
       Alert.alert(
         'Copia importada',
-        `${res.readings} lecturas · ${res.events} eventos · ${res.sessions} sesiones nuevos`,
+        `${res.readings} lecturas · ${res.events} eventos · ${res.sessions} sesiones nuevos` +
+          (res.skipped > 0 ? `\n(${res.skipped} lecturas ya existían)` : ''),
       );
     } catch {
       Alert.alert('Error', 'El archivo no es una copia válida de HeartMonitor.');
@@ -269,7 +270,8 @@ function BackupCard() {
       if (res) {
         Alert.alert(
           'Copia importada',
-          `${res.readings} lecturas · ${res.events} eventos · ${res.sessions} sesiones nuevos`,
+          `${res.readings} lecturas · ${res.events} eventos · ${res.sessions} sesiones nuevos` +
+            (res.skipped > 0 ? `\n(${res.skipped} lecturas ya existían)` : ''),
         );
       }
     } catch {

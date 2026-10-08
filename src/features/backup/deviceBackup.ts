@@ -138,6 +138,8 @@ export interface ImportResult {
   sessions: number;
   readings: number;
   events: number;
+  /** Readings already present in the DB — skipped to avoid duplicates. */
+  skipped: number;
 }
 
 /** Picks a JSON file via the system picker (fallback for files elsewhere). */
@@ -224,5 +226,6 @@ export async function importBackupFromUri(uri: string): Promise<ImportResult> {
     sessions: importedSessions,
     readings: freshReadings.length,
     events: freshEvents.length,
+    skipped: parsed.readings.length - freshReadings.length,
   };
 }
