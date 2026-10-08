@@ -47,17 +47,10 @@ export default function MonitorScreen() {
 
   const [pulse] = useState(() => new Animated.Value(1));
   const liveBpm = currentReading?.bpm ?? 60;
-  const [beatMs, setBeatMs] = useState(1000);
-
-  // Re-time the beat only when the period truly shifts. Returning the
-  // same beatMs makes React skip the render entirely, so the loop below
-  // is never torn down by ordinary 1 Hz bpm jitter mid-cycle.
-  useEffect(() => {
-    const target = Math.max(300, 60_000 / Math.max(30, liveBpm));
-    setBeatMs((prev) =>
-      Math.abs(target - prev) / prev < 0.12 ? prev : target,
-    );
-  }, [liveBpm]);
+  // Snap the period to ~5 bpm steps: ordinary 1 Hz jitter then leaves
+  // beatMs unchanged and the loop below keeps running — a 38 bpm beat
+  // needs ~1.6 s to finish a cycle and must not restart every reading.
+  const beatMs = Math.max(300, 60_000 / Math.max(30, Math.round(liveBpm / 5) * 5));
 
   useEffect(() => {
     if (!streaming) {
