@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { FlatList, StyleSheet } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -7,11 +7,17 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { formatDuration } from '@/domain/morningReport';
+import {
+  buildWeeklyReport,
+  type WeeklyReport,
+} from '@/domain/weeklyReport';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
+import { shareWeeklyPdf } from '@/features/reports/exportWeeklyPdf';
 import {
   loadSessionReports,
   type SessionWithReport,
 } from '@/features/reports/sessionReports';
+import { weeklyReportHtml } from '@/features/reports/weeklyReportHtml';
 import { useTheme } from '@/hooks/use-theme';
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -105,15 +111,114 @@ function ReportCard({ item }: { item: SessionWithReport }) {
   );
 }
 
+function WeeklyCard({ weekly }: { weekly: WeeklyReport }) {
+  const theme = useTheme();
+  const [exporting, setExporting] = useState(false);
+
+  const exportPdf = async () => {
+    setExporting(true);
+    try {
+      await shareWeeklyPdf(weeklyReportHtml(weekly));
+    } catch (e) {
+      Alert.alert(
+        'No se pudo exportar',
+        e instanceof Error ? e.message : 'Error desconocido',
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          Últimos 7 días
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {weekly.sessionsCount} sesiones · {weekly.nightsCovered} noches
+          cubiertas
+        </ThemedText>
+      </ThemedView>
+      <ThemedView style={styles.metricRow}>
+        <ThemedText type="small" themeColor="textSecondary">
+          Tiempo monitorizado
+        </ThemedText>
+        <ThemedText type="small">
+          {formatDuration(weekly.totalMonitoredMs)}
+        </ThemedText>
+      </ThemedView>
+      <ThemedView style={styles.metricRow}>
+        <ThemedText type="small" themeColor="textSecondary">
+          FC media (min–máx)
+        </ThemedText>
+        <ThemedText type="small">
+          {weekly.avgBpm !== null
+            ? `${weekly.avgBpm} bpm (${weekly.minBpm}–${weekly.maxBpm})`
+            : '—'}
+        </ThemedText>
+      </ThemedView>
+      <ThemedView style={styles.metricRow}>
+        <ThemedText type="small" themeColor="textSecondary">
+          Bajo umbral
+        </ThemedText>
+        <ThemedText type="small">
+          {weekly.timeBelowThresholdMs > 0
+            ? formatDuration(weekly.timeBelowThresholdMs)
+            : '—'}
+        </ThemedText>
+      </ThemedView>
+      <ThemedView style={styles.metricRow}>
+        <ThemedText type="small" themeColor="textSecondary">
+          Eventos
+        </ThemedText>
+        <ThemedText type="small">
+          {weekly.eventCount === 0
+            ? 'Ninguno'
+            : `${weekly.eventCount} (${weekly.bradycardiaCount} bradicardia · ${weekly.pauseCount} pausa)`}
+        </ThemedText>
+      </ThemedView>
+      <Pressable
+        onPress={exportPdf}
+        disabled={exporting || weekly.sessionsCount === 0}
+        style={[
+          styles.exportButton,
+          {
+            backgroundColor:
+              weekly.sessionsCount === 0
+                ? theme.backgroundElement
+                : theme.backgroundSelected,
+          },
+        ]}>
+        <ThemedText type="smallBold">
+          {exporting ? 'Generando…' : 'Exportar PDF'}
+        </ThemedText>
+      </Pressable>
+    </ThemedView>
+  );
+}
+
 export default function ReportsScreen() {
   const thresholds = useMonitorStore((s) => s.thresholds);
   const [items, setItems] = useState<SessionWithReport[]>([]);
+  const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       loadSessionReports(thresholds)
-        .then(setItems)
-        .catch(() => setItems([]));
+        .then((loaded) => {
+          setItems(loaded);
+          setWeekly(
+            buildWeeklyReport(
+              loaded.map((i) => i.report),
+              Date.now(),
+            ),
+          );
+        })
+        .catch(() => {
+          setItems([]);
+          setWeekly(null);
+        });
     }, [thresholds]),
   );
 
@@ -124,6 +229,11 @@ export default function ReportsScreen() {
           Informes
         </ThemedText>
         <FlatList
+          ListHeaderComponent={
+            weekly && weekly.sessionsCount > 0 ? (
+              <WeeklyCard weekly={weekly} />
+            ) : null
+          }
           data={items}
           keyExtractor={(i) => String(i.session.id)}
           contentContainerStyle={{ paddingBottom: BottomTabInset }}
@@ -149,6 +259,12 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     marginBottom: Spacing.two,
     gap: Spacing.one,
+  },
+  exportButton: {
+    borderRadius: Spacing.two,
+    paddingVertical: Spacing.two,
+    alignItems: 'center',
+    marginTop: Spacing.two,
   },
   cardHeader: { gap: Spacing.half },
   cardTitle: { fontSize: 16 },

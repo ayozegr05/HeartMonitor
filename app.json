@@ -45,7 +45,8 @@
       "react-native-ble-plx",
       "expo-sqlite",
       "expo-notifications",
-      "./plugins/withBleForegroundService"
+      "./plugins/withBleForegroundService",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,
