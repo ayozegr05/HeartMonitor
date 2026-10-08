@@ -8,13 +8,16 @@ import {
 import {
   assignEventsToSession,
   assignReadingsToSession,
+  deleteSession,
   getAllEvents,
   getAllSessions,
   getReadingsSince,
   getSessionlessReadings,
   importSession,
+  moveSessionContents,
   saveEvent,
   saveReadings,
+  updateSessionBounds,
 } from '@/data/readingsRepository';
 import { detectBradycardiaEvents } from '@/domain/bradycardia';
 import type { HRReading, ThresholdProfile } from '@/domain/models';
@@ -121,28 +124,58 @@ export async function restoreFromHealthConnect(
     }
   }
 
-  const existingSessions = await getAllSessions();
-  const sessionKey = (startedAt: number) => `${startedAt}|${RESTORE_SOURCE}`;
-  const existingKeys = new Set(
-    existingSessions.map((s) => sessionKey(s.startedAt)),
+  // Sessions get an exclusive end bound: reports count events with
+  // timestamp < endedAt, so ending on the last sample would drop an
+  // alert triggered by that final reading.
+  const restoredSessions = (await getAllSessions()).filter(
+    (s) => s.source === RESTORE_SOURCE,
   );
-  let restoredSessions = 0;
+  let createdSessions = 0;
   for (const g of groups) {
-    if (existingKeys.has(sessionKey(g.start))) continue;
-    const sessionId = await importSession({
-      startedAt: g.start,
-      endedAt: g.end,
-      source: RESTORE_SOURCE,
-      sensorLabel: 'Health Connect',
-    });
-    await assignReadingsToSession(sessionId, g.start, g.end);
-    await assignEventsToSession(sessionId, g.start, g.end);
-    restoredSessions += 1;
+    // Merge with restored sessions this group overlaps or touches within
+    // the gap — later restores extend a run instead of splitting it.
+    const neighbors = restoredSessions.filter(
+      (s) =>
+        s.startedAt <= g.end + SESSION_GAP_MS &&
+        (s.endedAt ?? s.startedAt) >= g.start - SESSION_GAP_MS,
+    );
+    if (neighbors.length === 0) {
+      const sessionId = await importSession({
+        startedAt: g.start,
+        endedAt: g.end + 1,
+        source: RESTORE_SOURCE,
+        sensorLabel: 'Health Connect',
+      });
+      await assignReadingsToSession(sessionId, g.start, g.end, RESTORE_SOURCE);
+      await assignEventsToSession(sessionId, g.start, g.end);
+      restoredSessions.push({
+        id: sessionId,
+        startedAt: g.start,
+        endedAt: g.end + 1,
+        source: RESTORE_SOURCE,
+        sensorLabel: 'Health Connect',
+      });
+      createdSessions += 1;
+      continue;
+    }
+    const target = neighbors[0];
+    const start = Math.min(target.startedAt, g.start);
+    const end = Math.max(target.endedAt ?? target.startedAt, g.end + 1);
+    for (const extra of neighbors.slice(1)) {
+      await moveSessionContents(extra.id, target.id);
+      await deleteSession(extra.id);
+      restoredSessions.splice(restoredSessions.indexOf(extra), 1);
+    }
+    await updateSessionBounds(target.id, start, end);
+    target.startedAt = start;
+    target.endedAt = end;
+    await assignReadingsToSession(target.id, g.start, g.end, RESTORE_SOURCE);
+    await assignEventsToSession(target.id, g.start, g.end);
   }
 
   return {
     importedReadings: fresh.length,
     importedBradycardias: found.length,
-    restoredSessions,
+    restoredSessions: createdSessions,
   };
 }
