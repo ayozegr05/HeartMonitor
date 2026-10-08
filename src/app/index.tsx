@@ -2,8 +2,8 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useEffect, useState } from 'react';
 import { Animated, FlatList, Pressable, StyleSheet } from 'react-native';
 import {
-  SafeAreaView,
-  useSafeAreaInsets,
+    SafeAreaView,
+    useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -104,9 +104,23 @@ export default function MonitorScreen() {
   const [scanning, setScanning] = useState(false);
   const [devices, setDevices] = useState<ScannedSensor[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [btPoweredOn, setBtPoweredOn] = useState(true);
+
+  useEffect(() => {
+    if (mode !== 'ble') return;
+    const sub = getBleManager().onStateChange(
+      (state) => setBtPoweredOn(state === 'PoweredOn'),
+      true,
+    );
+    return () => sub.remove();
+  }, [mode]);
 
   const startScan = async () => {
     setError(null);
+    if ((await getBleManager().state()) !== 'PoweredOn') {
+      setError('Bluetooth apagado — enciéndelo para buscar sensores');
+      return;
+    }
     const granted = await requestBlePermissions();
     if (!granted) {
       setError('Permisos de Bluetooth denegados');
@@ -124,6 +138,10 @@ export default function MonitorScreen() {
 
   const connectTo = async (device: ScannedSensor) => {
     setError(null);
+    if ((await getBleManager().state()) !== 'PoweredOn') {
+      setError('Bluetooth apagado — enciéndelo para conectar');
+      return;
+    }
     try {
       await startBle(device.id);
     } catch {
@@ -225,6 +243,14 @@ export default function MonitorScreen() {
           </>
         ) : (
           <>
+            {!btPoweredOn && (
+              <ThemedView type="backgroundElement" style={styles.alertBox}>
+                <ThemedText type="smallBold">Bluetooth apagado</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Enciéndelo para buscar o reconectar sensores
+                </ThemedText>
+              </ThemedView>
+            )}
             {(streaming ||
               connectionState === 'connecting' ||
               connectionState === 'reconnecting') &&
