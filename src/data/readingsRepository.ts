@@ -122,6 +122,63 @@ export async function getSessionEvents(sessionId: number) {
     .orderBy(events.timestamp);
 }
 
+/** Full-table reads for the manual backup export. */
+export async function getAllReadings() {
+  return getDb().select().from(readings).orderBy(readings.timestamp);
+}
+
+export async function getAllEvents() {
+  return getDb().select().from(events).orderBy(events.timestamp);
+}
+
+export async function getAllSessions() {
+  return getDb().select().from(sessions).orderBy(sessions.startedAt);
+}
+
+/** Restores a session row from a backup; returns the new local id. */
+export async function importSession(row: {
+  startedAt: number;
+  endedAt: number | null;
+  source: string;
+  sensorLabel: string;
+}): Promise<number> {
+  const res = await getDb()
+    .insert(sessions)
+    .values(row)
+    .returning({ id: sessions.id });
+  return res[0].id;
+}
+
+export async function importReadings(
+  rows: {
+    timestamp: number;
+    bpm: number;
+    rrIntervalsMs: string | null;
+    source: string;
+    sessionId: number | null;
+  }[],
+): Promise<void> {
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    await getDb()
+      .insert(readings)
+      .values(rows.slice(i, i + CHUNK));
+  }
+}
+
+export async function importEvents(
+  rows: {
+    type: 'bradycardia' | 'pause';
+    timestamp: number;
+    payload: string;
+    sessionId: number | null;
+  }[],
+): Promise<void> {
+  for (const row of rows) {
+    await getDb().insert(events).values(row);
+  }
+}
+
 /** Session events parsed back into domain AlertEvent objects. */
 export async function getSessionAlertEvents(
   sessionId: number,

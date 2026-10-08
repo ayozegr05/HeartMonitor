@@ -48,6 +48,7 @@
       "expo-sqlite",
       "expo-notifications",
       "./plugins/withBleForegroundService",
+      "./plugins/withAndroidAutoBackup",
       "expo-sharing",
       "react-native-health-connect",
       [

@@ -7,6 +7,8 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { exportBackup, importBackup } from '@/features/backup/deviceBackup';
+import { getRecentSessions } from '@/data/readingsRepository';
 import { restoreFromHealthConnect } from '@/features/healthconnect/healthConnectRestore';
 import {
   healthConnectStatus,
@@ -143,6 +145,111 @@ function HealthConnectCard() {
   );
 }
 
+/**
+ * Manual backup card. Android Auto Backup already mirrors the DB silently
+ * (see plugins/withAndroidAutoBackup); this adds the user-visible export/
+ * import plus a one-time nag the first time real history is at stake.
+ */
+function BackupCard() {
+  const theme = useTheme();
+  const {
+    lastBackupExportAt,
+    backupNagDismissed,
+    setLastBackupExportAt,
+    setBackupNagDismissed,
+  } = useMonitorStore();
+  const [busy, setBusy] = useState<'export' | 'import' | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (lastBackupExportAt !== null || backupNagDismissed) return;
+      getRecentSessions(3)
+        .then((sessions) => {
+          if (sessions.length >= 3) {
+            Alert.alert(
+              'Protege tu histórico',
+              'Tus datos solo viven en esta app y se pierden al desinstalarla. ' +
+                'Android ya guarda una copia automática, y aquí puedes exportar ' +
+                'un archivo de respaldo cuando quieras.',
+              [{ text: 'Entendido', onPress: setBackupNagDismissed }],
+            );
+          }
+        })
+        .catch(() => {});
+    }, [lastBackupExportAt, backupNagDismissed, setBackupNagDismissed]),
+  );
+
+  const doExport = async () => {
+    setBusy('export');
+    try {
+      const res = await exportBackup();
+      if (res) {
+        setLastBackupExportAt(Date.now());
+        Alert.alert(
+          'Copia exportada',
+          `${res.readings} lecturas · ${res.events} eventos · ${res.sessions} sesiones`,
+        );
+      } else {
+        Alert.alert('No disponible', 'Este dispositivo no permite compartir archivos.');
+      }
+    } catch {
+      Alert.alert('Error', 'No se pudo exportar la copia.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doImport = async () => {
+    setBusy('import');
+    try {
+      const res = await importBackup();
+      if (res) {
+        Alert.alert(
+          'Copia importada',
+          `${res.readings} lecturas · ${res.events} eventos · ${res.sessions} sesiones nuevos`,
+        );
+      }
+    } catch {
+      Alert.alert('Error', 'El archivo no es una copia válida de HeartMonitor.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <ThemedView style={styles.field}>
+      <ThemedText type="smallBold">Copia de seguridad</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        Copia automática de Android: activa
+        {lastBackupExportAt
+          ? ` · última exportación ${new Date(lastBackupExportAt).toLocaleString()}`
+          : ' · sin exportaciones manuales aún'}
+      </ThemedText>
+      <Pressable
+        onPress={() => void doExport()}
+        disabled={busy !== null}
+        style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+        <ThemedText type="smallBold">
+          {busy === 'export' ? 'Exportando…' : 'Exportar copia'}
+        </ThemedText>
+      </Pressable>
+      <Pressable
+        onPress={() => void doImport()}
+        disabled={busy !== null}
+        style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+        <ThemedText type="smallBold">
+          {busy === 'import' ? 'Importando…' : 'Importar copia'}
+        </ThemedText>
+      </Pressable>
+      <ThemedText type="small" themeColor="textSecondary">
+        Exporta lecturas, eventos y sesiones a un archivo JSON que puedes
+        guardar en Drive o tu correo y restaurar tras reinstalar o cambiar
+        de móvil.
+      </ThemedText>
+    </ThemedView>
+  );
+}
+
 export default function SettingsScreen() {
   const theme = useTheme();
   const { thresholds, setThresholds } = useMonitorStore();
@@ -223,6 +330,8 @@ export default function SettingsScreen() {
         </Pressable>
 
         {Platform.OS === 'android' && <HealthConnectCard />}
+
+        {Platform.OS === 'android' && <BackupCard />}
 
         {Platform.OS === 'android' && (
           <ThemedView style={styles.field}>
