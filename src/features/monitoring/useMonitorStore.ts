@@ -43,6 +43,7 @@ import {
   stopMonitoringService,
   updateMonitoringNotification,
 } from '@/features/monitoring/foregroundService';
+import { syncReadingsToHealthConnect } from '@/features/healthconnect/healthConnectSync';
 import { fireAlert } from '@/shared/notifications';
 
 type SensorSource = 'mock' | 'ble';
@@ -75,11 +76,18 @@ interface MonitorState {
   sessionStartedAt: number | null;
   /** Watermark of the last emitted morning report (Unix ms). */
   lastReportedAt: number | null;
+  /** Whether readings are mirrored to Android Health Connect. */
+  healthConnectEnabled: boolean;
+  /** Watermark of the last reading pushed to Health Connect (Unix ms). */
+  lastHcSyncAt: number | null;
 
   startMock: (scenario: MockScenario) => Promise<void>;
   startBle: (deviceId: string) => Promise<void>;
   stop: () => Promise<void>;
   setThresholds: (t: ThresholdProfile) => void;
+  setHealthConnectEnabled: (enabled: boolean) => void;
+  /** Pushes new readings to Health Connect; no-op when disabled. */
+  syncHealthConnect: () => Promise<void>;
   /**
    * Called once at app start. If a BLE session was live when the app last
    * died (crash, process reclaim), resume it — the user intent was explicit.
@@ -329,6 +337,8 @@ export const useMonitorStore = create<MonitorState>()(
         sessionId: null,
         sessionStartedAt: null,
         lastReportedAt: null,
+        healthConnectEnabled: false,
+        lastHcSyncAt: null,
 
         startMock: async (scenario) => {
           await beginSession();
@@ -446,9 +456,25 @@ export const useMonitorStore = create<MonitorState>()(
             sessionStartedAt: null,
             lastReportedAt: null,
           });
+          // Session closed — flush its readings to Health Connect.
+          void get().syncHealthConnect();
         },
 
         setThresholds: (t) => set({ thresholds: t }),
+
+        setHealthConnectEnabled: (enabled) => {
+          set({ healthConnectEnabled: enabled });
+          if (enabled) void get().syncHealthConnect();
+        },
+
+        syncHealthConnect: async () => {
+          const { healthConnectEnabled, lastHcSyncAt } = get();
+          if (!healthConnectEnabled) return;
+          const syncedUntil = await syncReadingsToHealthConnect(
+            lastHcSyncAt ?? 0,
+          );
+          if (syncedUntil !== null) set({ lastHcSyncAt: syncedUntil });
+        },
       };
     },
     {
@@ -463,6 +489,8 @@ export const useMonitorStore = create<MonitorState>()(
         sessionId: s.sessionId,
         sessionStartedAt: s.sessionStartedAt,
         lastReportedAt: s.lastReportedAt,
+        healthConnectEnabled: s.healthConnectEnabled,
+        lastHcSyncAt: s.lastHcSyncAt,
       }),
     },
   ),
