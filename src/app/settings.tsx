@@ -95,9 +95,9 @@ function HealthConnectCard() {
               setRestoreMsg(
                 res === null
                   ? 'No se pudo acceder a Health Connect.'
-                  : res.importedReadings === 0
+                  : res.importedReadings === 0 && res.restoredSessions === 0
                     ? 'No hay lecturas nuevas que restaurar.'
-                    : `${res.importedReadings} lecturas restauradas · ${res.importedBradycardias} bradicardias`,
+                    : `${res.importedReadings} lecturas · ${res.importedBradycardias} bradicardias · ${res.restoredSessions} sesiones restauradas`,
               );
             } catch {
               setRestoreMsg('La restauración falló.');
