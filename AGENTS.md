@@ -34,6 +34,17 @@ Run lint and typecheck before declaring any task done.
 Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
 Docs: https://docs.expo.dev/eas/index.md
 
+## Git identity — before the first commit
+
+In ANY environment (local machine, cloud session, CI), configure the author identity before running `git commit`:
+
+```bash
+git config user.name "Ayoze Gómez Rosa"
+git config user.email "130746651+ayozegr05@users.noreply.github.com"
+```
+
+Never commit as a bot or placeholder identity. If the agent wants attribution, use a `Co-Authored-By:` trailer — the commit author is always the identity above.
+
 ## Rules
 
 - If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
