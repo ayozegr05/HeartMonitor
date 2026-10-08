@@ -139,6 +139,7 @@ export async function assignReadingsToSession(
   sessionId: number,
   fromTs: number,
   toTs: number,
+  source?: string,
 ): Promise<void> {
   await getDb()
     .update(readings)
@@ -146,6 +147,7 @@ export async function assignReadingsToSession(
     .where(
       and(
         isNull(readings.sessionId),
+        source ? eq(readings.source, source) : undefined,
         gte(readings.timestamp, fromTs),
         lte(readings.timestamp, toTs),
       ),
@@ -168,6 +170,38 @@ export async function assignEventsToSession(
         lte(events.timestamp, toTs),
       ),
     );
+}
+
+/** Updates a session's time bounds (used when a restored run extends it). */
+export async function updateSessionBounds(
+  sessionId: number,
+  startedAt: number,
+  endedAt: number,
+): Promise<void> {
+  await getDb()
+    .update(sessions)
+    .set({ startedAt, endedAt })
+    .where(eq(sessions.id, sessionId));
+}
+
+/** Moves every reading and event of one session onto another (session merge). */
+export async function moveSessionContents(
+  fromSessionId: number,
+  toSessionId: number,
+): Promise<void> {
+  const db = getDb();
+  await db
+    .update(readings)
+    .set({ sessionId: toSessionId })
+    .where(eq(readings.sessionId, fromSessionId));
+  await db
+    .update(events)
+    .set({ sessionId: toSessionId })
+    .where(eq(events.sessionId, fromSessionId));
+}
+
+export async function deleteSession(sessionId: number): Promise<void> {
+  await getDb().delete(sessions).where(eq(sessions.id, sessionId));
 }
 
 /** Full-table reads for the manual backup export. */
