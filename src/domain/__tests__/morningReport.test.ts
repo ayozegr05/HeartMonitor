@@ -81,6 +81,20 @@ describe('buildSessionReport', () => {
     expect(report.nightCoverageMs).toBe(0);
   });
 
+  it('caps attribution at the sampling interval so disconnects are unmeasured', () => {
+    // A 34-bpm reading at 02:00 followed by a reconnection at 06:00 must not
+    // count 4 hours of below-threshold time or night coverage.
+    const start = at(2);
+    const report = buildSessionReport(
+      { startedAt: start, endedAt: at(8) },
+      [r(start, 34), r(at(6), 50)],
+      [],
+      t,
+    );
+    expect(report.timeBelowThresholdMs).toBe(60_000);
+    expect(report.nightCoverageMs).toBe(2 * 60_000);
+  });
+
   it('counts events inside the window and finds the longest pause', () => {
     const events: AlertEvent[] = [
       { type: 'bradycardia', timestamp: at(3), bpm: 34 },

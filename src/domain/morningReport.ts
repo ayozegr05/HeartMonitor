@@ -37,13 +37,22 @@ export interface SessionReport {
 }
 
 /**
+ * A reading owns at most this much of the timeline. BLE drops and process
+ * deaths leave gaps of arbitrary length between stored rows — attributing
+ * the whole gap to the last sampled state would turn unmeasured hours into
+ * false sub-threshold / night coverage.
+ */
+const MAX_ATTRIBUTED_SLICE_MS = 60_000;
+
+/**
  * Builds the per-session ("morning") report purely from data — no DB, no
  * platform APIs. `events` may include rows outside the window; they are
  * filtered to [windowStart, windowEnd).
  *
  * Interval attribution: each reading owns the slice until the next reading
- * (or the window end for the last one), so sub-threshold and night coverage
- * reflect the time actually spent in that state, not just sample counts.
+ * (or the window end for the last one), capped at MAX_ATTRIBUTED_SLICE_MS,
+ * so sub-threshold and night coverage reflect the time actually spent in
+ * that state, not just sample counts.
  */
 export function buildSessionReport(
   window: ReportWindow,
@@ -70,7 +79,10 @@ export function buildSessionReport(
 
     const next = sorted[i + 1];
     const sliceEnd = Math.min(next?.timestamp ?? windowEnd, windowEnd);
-    const sliceMs = Math.max(0, sliceEnd - r.timestamp);
+    const sliceMs = Math.min(
+      Math.max(0, sliceEnd - r.timestamp),
+      MAX_ATTRIBUTED_SLICE_MS,
+    );
     const date = new Date(r.timestamp);
     if (r.bpm < activeLowThreshold(thresholds, date)) {
       timeBelowThresholdMs += sliceMs;
