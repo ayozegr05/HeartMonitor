@@ -80,6 +80,10 @@ interface MonitorState {
   healthConnectEnabled: boolean;
   /** Watermark of the last reading pushed to Health Connect (Unix ms). */
   lastHcSyncAt: number | null;
+  /** Last manual backup export (Unix ms); null = never exported. */
+  lastBackupExportAt: number | null;
+  /** The one-time "protect your history" nag has been acknowledged. */
+  backupNagDismissed: boolean;
 
   startMock: (scenario: MockScenario) => Promise<void>;
   startBle: (deviceId: string) => Promise<void>;
@@ -88,6 +92,8 @@ interface MonitorState {
   setHealthConnectEnabled: (enabled: boolean) => void;
   /** Pushes new readings to Health Connect; no-op when disabled. */
   syncHealthConnect: () => Promise<void>;
+  setLastBackupExportAt: (ts: number) => void;
+  setBackupNagDismissed: () => void;
   /**
    * Called once at app start. If a BLE session was live when the app last
    * died (crash, process reclaim), resume it — the user intent was explicit.
@@ -364,6 +370,8 @@ export const useMonitorStore = create<MonitorState>()(
         lastReportedAt: null,
         healthConnectEnabled: false,
         lastHcSyncAt: null,
+        lastBackupExportAt: null,
+        backupNagDismissed: false,
 
         startMock: async (scenario) => {
           await beginSession();
@@ -497,6 +505,9 @@ export const useMonitorStore = create<MonitorState>()(
           if (enabled) void get().syncHealthConnect();
         },
 
+        setLastBackupExportAt: (ts) => set({ lastBackupExportAt: ts }),
+        setBackupNagDismissed: () => set({ backupNagDismissed: true }),
+
         syncHealthConnect: async () => {
           const { healthConnectEnabled, lastHcSyncAt } = get();
           if (!healthConnectEnabled) return;
@@ -521,6 +532,8 @@ export const useMonitorStore = create<MonitorState>()(
         lastReportedAt: s.lastReportedAt,
         healthConnectEnabled: s.healthConnectEnabled,
         lastHcSyncAt: s.lastHcSyncAt,
+        lastBackupExportAt: s.lastBackupExportAt,
+        backupNagDismissed: s.backupNagDismissed,
       }),
     },
   ),
