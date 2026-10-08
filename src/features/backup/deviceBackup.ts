@@ -1,21 +1,20 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 
 import {
-  getAllEvents,
-  getAllReadings,
-  getAllSessions,
-  importEvents,
-  importReadings,
-  importSession,
+    getAllEvents,
+    getAllReadings,
+    getAllSessions,
+    importEvents,
+    importReadings,
+    importSession,
 } from '@/data/readingsRepository';
 
 /**
  * Manual device backup: exports the whole local DB (sessions, readings,
- * events) to a JSON file the user can keep anywhere, and imports it back —
- * e.g. after a reinstall or on a new phone. Everything stays local; the
- * share sheet decides where the file goes.
+ * events) to a JSON file in a user-chosen folder (SAF), and imports it
+ * back — e.g. after a reinstall or on a new phone. Everything stays
+ * local; the user picks the destination folder once and it is remembered.
  *
  * Android Auto Backup (see plugins/withAndroidAutoBackup) covers the same
  * data silently; this is the user-controlled belt-and-braces on top.
@@ -51,13 +50,23 @@ interface BackupFile {
   events: BackupEventRow[];
 }
 
-/** Exports the full DB to a shareable JSON file. Returns the row counts. */
-export async function exportBackup(): Promise<{
+/**
+ * Lets the user pick the folder that will hold backups (SAF persisted
+ * permission — survives reboots). Returns the directory URI or null.
+ */
+export async function pickBackupFolder(): Promise<string | null> {
+  const res =
+    await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+  return res.granted ? res.directoryUri : null;
+}
+
+/** Exports the full DB as a JSON file inside `directoryUri` (SAF). */
+export async function exportBackup(directoryUri: string): Promise<{
   sessions: number;
   readings: number;
   events: number;
-} | null> {
-  if (!(await Sharing.isAvailableAsync())) return null;
+  fileName: string;
+}> {
   const [sessionRows, readingRows, eventRows] = await Promise.all([
     getAllSessions(),
     getAllReadings(),
@@ -88,18 +97,41 @@ export async function exportBackup(): Promise<{
     })),
   };
 
-  const stamp = new Date().toISOString().slice(0, 10);
-  const uri = `${FileSystem.cacheDirectory}heartmonitor-backup-${stamp}.json`;
-  await FileSystem.writeAsStringAsync(uri, JSON.stringify(payload));
-  await Sharing.shareAsync(uri, {
-    mimeType: 'application/json',
-    dialogTitle: 'Copia de seguridad HeartMonitor',
-  });
+  const fileName = `heartmonitor-backup-${new Date()
+    .toISOString()
+    .slice(0, 10)}.json`;
+  const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(
+    directoryUri,
+    fileName,
+    'application/json',
+  );
+  await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(payload));
   return {
     sessions: sessionRows.length,
     readings: readingRows.length,
     events: eventRows.length,
+    fileName,
   };
+}
+
+export interface BackupEntry {
+  uri: string;
+  name: string;
+}
+
+/** Lists the backup files inside the user's chosen SAF folder, newest first. */
+export async function listBackupsInFolder(
+  directoryUri: string,
+): Promise<BackupEntry[]> {
+  const uris =
+    await FileSystem.StorageAccessFramework.readDirectoryAsync(directoryUri);
+  return uris
+    .map((uri) => {
+      const decoded = decodeURIComponent(uri);
+      return { uri, name: decoded.slice(decoded.lastIndexOf('/') + 1) };
+    })
+    .filter((f) => f.name.endsWith('.json'))
+    .sort((a, b) => b.name.localeCompare(a.name));
 }
 
 export interface ImportResult {
@@ -108,18 +140,22 @@ export interface ImportResult {
   events: number;
 }
 
-/**
- * Imports a backup file, skipping rows already stored. Session ids are
- * re-generated locally and remapped onto the imported readings/events.
- * Returns null when the user cancels the picker.
- */
+/** Picks a JSON file via the system picker (fallback for files elsewhere). */
 export async function importBackup(): Promise<ImportResult | null> {
   const picked = await DocumentPicker.getDocumentAsync({
     type: 'application/json',
     copyToCacheDirectory: true,
   });
   if (picked.canceled || picked.assets.length === 0) return null;
-  const text = await FileSystem.readAsStringAsync(picked.assets[0].uri);
+  return importBackupFromUri(picked.assets[0].uri);
+}
+
+/**
+ * Imports a backup file, skipping rows already stored. Session ids are
+ * re-generated locally and remapped onto the imported readings/events.
+ */
+export async function importBackupFromUri(uri: string): Promise<ImportResult> {
+  const text = await FileSystem.readAsStringAsync(uri);
   const parsed = JSON.parse(text) as BackupFile;
   if (
     parsed.version !== 1 ||

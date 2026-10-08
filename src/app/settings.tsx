@@ -1,26 +1,34 @@
+import * as IntentLauncher from 'expo-intent-launcher';
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
-  Alert,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
+    Alert,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    TextInput
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as IntentLauncher from 'expo-intent-launcher';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-import { exportBackup, importBackup } from '@/features/backup/deviceBackup';
 import { getRecentSessions } from '@/data/readingsRepository';
+import {
+    exportBackup,
+    importBackup,
+    importBackupFromUri,
+    listBackupsInFolder,
+    pickBackupFolder,
+    type BackupEntry
+} from '@/features/backup/deviceBackup';
 import { restoreFromHealthConnect } from '@/features/healthconnect/healthConnectRestore';
 import {
-  healthConnectStatus,
-  requestHealthConnectAccess,
-  type HealthConnectAvailability,
+    healthConnectStatus,
+    requestHealthConnectAccess,
+    type HealthConnectAvailability,
 } from '@/features/healthconnect/healthConnectSync';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { useTheme } from '@/hooks/use-theme';
@@ -157,15 +165,31 @@ function HealthConnectCard() {
  * (see plugins/withAndroidAutoBackup); this adds the user-visible export/
  * import plus a one-time nag the first time real history is at stake.
  */
+/** Decodes a SAF tree uri like "primary:Documents/HeartMonitor" for display. */
+function folderDisplayName(directoryUri: string): string {
+  const tail = decodeURIComponent(directoryUri).split('/tree/').pop() ?? '';
+  return tail.replace(/^primary:/, '');
+}
+
 function BackupCard() {
   const theme = useTheme();
   const {
     lastBackupExportAt,
     backupNagDismissed,
+    backupFolderUri,
     setLastBackupExportAt,
     setBackupNagDismissed,
+    setBackupFolderUri,
   } = useMonitorStore();
   const [busy, setBusy] = useState<'export' | 'import' | null>(null);
+  const [importList, setImportList] = useState<BackupEntry[] | null>(null);
+
+  const ensureFolder = async (): Promise<string | null> => {
+    if (backupFolderUri) return backupFolderUri;
+    const uri = await pickBackupFolder();
+    if (uri) setBackupFolderUri(uri);
+    return uri;
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -189,16 +213,14 @@ function BackupCard() {
   const doExport = async () => {
     setBusy('export');
     try {
-      const res = await exportBackup();
-      if (res) {
-        setLastBackupExportAt(Date.now());
-        Alert.alert(
-          'Copia exportada',
-          `${res.readings} lecturas · ${res.events} eventos · ${res.sessions} sesiones`,
-        );
-      } else {
-        Alert.alert('No disponible', 'Este dispositivo no permite compartir archivos.');
-      }
+      const dir = await ensureFolder();
+      if (!dir) return;
+      const res = await exportBackup(dir);
+      setLastBackupExportAt(Date.now());
+      Alert.alert(
+        'Copia guardada',
+        `${res.fileName}\n${res.readings} lecturas · ${res.events} eventos · ${res.sessions} sesiones`,
+      );
     } catch {
       Alert.alert('Error', 'No se pudo exportar la copia.');
     } finally {
@@ -206,7 +228,41 @@ function BackupCard() {
     }
   };
 
+  const importFromUri = async (uri: string) => {
+    setImportList(null);
+    setBusy('import');
+    try {
+      const res = await importBackupFromUri(uri);
+      Alert.alert(
+        'Copia importada',
+        `${res.readings} lecturas · ${res.events} eventos · ${res.sessions} sesiones nuevos`,
+      );
+    } catch {
+      Alert.alert('Error', 'El archivo no es una copia válida de HeartMonitor.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const doImport = async () => {
+    try {
+      const dir = backupFolderUri ?? (await ensureFolder());
+      if (dir) {
+        const files = await listBackupsInFolder(dir);
+        if (files.length > 0) {
+          setImportList(files);
+          return;
+        }
+      }
+      // No folder or no backups inside it — fall back to the system picker.
+      await doImportPicker();
+    } catch {
+      Alert.alert('Error', 'El archivo no es una copia válida de HeartMonitor.');
+    }
+  };
+
+  const doImportPicker = async () => {
+    setImportList(null);
     setBusy('import');
     try {
       const res = await importBackup();
@@ -223,6 +279,11 @@ function BackupCard() {
     }
   };
 
+  const changeFolder = async () => {
+    const uri = await pickBackupFolder();
+    if (uri) setBackupFolderUri(uri);
+  };
+
   return (
     <ThemedView style={styles.field}>
       <ThemedText type="smallBold">Copia de seguridad</ThemedText>
@@ -232,6 +293,13 @@ function BackupCard() {
           ? ` · última exportación ${new Date(lastBackupExportAt).toLocaleString()}`
           : ' · sin exportaciones manuales aún'}
       </ThemedText>
+      <Pressable onPress={() => void changeFolder()}>
+        <ThemedText type="small" themeColor="textSecondary">
+          {backupFolderUri
+            ? `Carpeta: ${folderDisplayName(backupFolderUri)} (tocar para cambiar)`
+            : 'Elige la carpeta donde guardar las copias (se pide una vez)'}
+        </ThemedText>
+      </Pressable>
       <Pressable
         onPress={() => void doExport()}
         disabled={busy !== null}
@@ -249,10 +317,44 @@ function BackupCard() {
         </ThemedText>
       </Pressable>
       <ThemedText type="small" themeColor="textSecondary">
-        Exporta lecturas, eventos y sesiones a un archivo JSON que puedes
-        guardar en Drive o tu correo y restaurar tras reinstalar o cambiar
-        de móvil.
+        Exporta lecturas, eventos y sesiones a un JSON en la carpeta que
+        elijas; importar lista los backups de esa misma carpeta.
       </ThemedText>
+
+      <Modal
+        visible={importList !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImportList(null)}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setImportList(null)}>
+          <ThemedView style={styles.modalCard}>
+            <ThemedText type="smallBold">Elige una copia</ThemedText>
+            <ScrollView style={styles.modalList}>
+              {(importList ?? []).map((f) => (
+                <Pressable
+                  key={f.uri}
+                  onPress={() => void importFromUri(f.uri)}
+                  style={[
+                    styles.button,
+                    { backgroundColor: theme.backgroundElement },
+                  ]}>
+                  <ThemedText type="small">{f.name}</ThemedText>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Pressable
+              onPress={() => void doImportPicker()}
+              style={[
+                styles.button,
+                { backgroundColor: theme.backgroundSelected },
+              ]}>
+              <ThemedText type="smallBold">Buscar otro archivo…</ThemedText>
+            </Pressable>
+          </ThemedView>
+        </Pressable>
+      </Modal>
     </ThemedView>
   );
 }
@@ -413,4 +515,17 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: '#ffffff' },
   disclaimer: { textAlign: 'center' },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    padding: Spacing.four,
+  },
+  modalCard: {
+    borderRadius: Spacing.three,
+    padding: Spacing.four,
+    gap: Spacing.two,
+    maxHeight: '70%',
+  },
+  modalList: { flexGrow: 0 },
 });

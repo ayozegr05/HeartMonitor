@@ -81,6 +81,8 @@ interface MonitorState {
   lastHcSyncAt: number | null;
   /** Last manual backup export (Unix ms); null = never exported. */
   lastBackupExportAt: number | null;
+  /** SAF uri of the user-chosen backup folder; null = not picked yet. */
+  backupFolderUri: string | null;
   /** The one-time "protect your history" nag has been acknowledged. */
   backupNagDismissed: boolean;
 
@@ -95,6 +97,7 @@ interface MonitorState {
   syncHealthConnect: () => Promise<void>;
   setLastBackupExportAt: (ts: number) => void;
   setBackupNagDismissed: () => void;
+  setBackupFolderUri: (uri: string | null) => void;
   /**
    * Called once at app start. If a BLE session was live when the app last
    * died (crash, process reclaim), resume it — the user intent was explicit.
@@ -415,6 +418,7 @@ export const useMonitorStore = create<MonitorState>()(
         healthConnectEnabled: false,
         lastHcSyncAt: null,
         lastBackupExportAt: null,
+        backupFolderUri: null,
         backupNagDismissed: false,
 
         startMock: async (scenario) => {
@@ -568,6 +572,7 @@ export const useMonitorStore = create<MonitorState>()(
 
         setLastBackupExportAt: (ts) => set({ lastBackupExportAt: ts }),
         setBackupNagDismissed: () => set({ backupNagDismissed: true }),
+        setBackupFolderUri: (uri) => set({ backupFolderUri: uri }),
 
         syncHealthConnect: async () => {
           const { healthConnectEnabled, lastHcSyncAt } = get();
@@ -595,6 +600,7 @@ export const useMonitorStore = create<MonitorState>()(
         healthConnectEnabled: s.healthConnectEnabled,
         lastHcSyncAt: s.lastHcSyncAt,
         lastBackupExportAt: s.lastBackupExportAt,
+        backupFolderUri: s.backupFolderUri,
         backupNagDismissed: s.backupNagDismissed,
       }),
     },
