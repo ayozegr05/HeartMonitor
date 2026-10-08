@@ -1,13 +1,111 @@
-import { useState } from 'react';
-import { Platform, Pressable, StyleSheet, TextInput } from 'react-native';
+import { useCallback, useState } from 'react';
+import { Alert, Platform, Pressable, StyleSheet, TextInput } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as IntentLauncher from 'expo-intent-launcher';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import {
+  healthConnectStatus,
+  requestHealthConnectAccess,
+  type HealthConnectAvailability,
+} from '@/features/healthconnect/healthConnectSync';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { useTheme } from '@/hooks/use-theme';
+
+const HC_STATUS_LABELS: Record<HealthConnectAvailability, string> = {
+  available: 'Disponible',
+  needs_update: 'Requiere actualizar Health Connect',
+  unavailable: 'No disponible en este dispositivo',
+  not_android: 'Solo en Android',
+};
+
+function HealthConnectCard() {
+  const theme = useTheme();
+  const {
+    healthConnectEnabled,
+    lastHcSyncAt,
+    setHealthConnectEnabled,
+    syncHealthConnect,
+  } = useMonitorStore();
+  const [status, setStatus] = useState<HealthConnectAvailability | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      healthConnectStatus().then(setStatus).catch(() => setStatus(null));
+    }, []),
+  );
+
+  const enable = async () => {
+    setBusy(true);
+    try {
+      const granted = await requestHealthConnectAccess();
+      if (granted) {
+        setHealthConnectEnabled(true);
+      } else {
+        Alert.alert(
+          'Permiso denegado',
+          'Health Connect no concedió acceso de escritura a la frecuencia cardíaca.',
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ThemedView style={styles.field}>
+      <ThemedText type="smallBold">Health Connect</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        {status === null ? 'Comprobando…' : HC_STATUS_LABELS[status]}
+        {healthConnectEnabled
+          ? ` · sincronizado${
+              lastHcSyncAt
+                ? ` hasta ${new Date(lastHcSyncAt).toLocaleString()}`
+                : ''
+            }`
+          : ''}
+      </ThemedText>
+      {status === 'available' && !healthConnectEnabled && (
+        <Pressable
+          onPress={enable}
+          disabled={busy}
+          style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+          <ThemedText type="smallBold">
+            {busy ? 'Solicitando…' : 'Activar sincronización'}
+          </ThemedText>
+        </Pressable>
+      )}
+      {healthConnectEnabled && (
+        <>
+          <Pressable
+            onPress={() => void syncHealthConnect()}
+            style={[
+              styles.button,
+              { backgroundColor: theme.backgroundElement },
+            ]}>
+            <ThemedText type="smallBold">Sincronizar ahora</ThemedText>
+          </Pressable>
+          <Pressable
+            onPress={() => setHealthConnectEnabled(false)}
+            style={[
+              styles.button,
+              { backgroundColor: theme.backgroundElement },
+            ]}>
+            <ThemedText type="smallBold">Desactivar</ThemedText>
+          </Pressable>
+        </>
+      )}
+      <ThemedText type="small" themeColor="textSecondary">
+        Copia las lecturas de FC al almacén de Health Connect del móvil al
+        terminar cada sesión y al abrir la app. Todo sigue en el dispositivo.
+      </ThemedText>
+    </ThemedView>
+  );
+}
 
 export default function SettingsScreen() {
   const theme = useTheme();
@@ -87,6 +185,8 @@ export default function SettingsScreen() {
             {saved ? 'Guardado ✓' : 'Guardar'}
           </ThemedText>
         </Pressable>
+
+        {Platform.OS === 'android' && <HealthConnectCard />}
 
         {Platform.OS === 'android' && (
           <ThemedView style={styles.field}>

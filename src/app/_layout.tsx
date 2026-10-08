@@ -24,6 +24,8 @@ export default function TabLayout() {
     // If the app died mid-session (crash, process reclaim), pick up where
     // it left off — the user's intent to monitor overnight was explicit.
     void useMonitorStore.getState().resumeBleSession();
+    // Catch up Health Connect with readings written while the app was down.
+    void useMonitorStore.getState().syncHealthConnect();
   }, []);
 
   return (
