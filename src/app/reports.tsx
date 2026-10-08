@@ -49,6 +49,7 @@ function ReportCard({ item }: { item: SessionWithReport }) {
   const theme = useTheme();
   const { session, report } = item;
   const live = session.endedAt === null;
+  const hasEvents = report.eventCount > 0;
 
   const metrics: [string, string][] = [
     ['Duración', formatDuration(report.durationMs)],
@@ -68,7 +69,7 @@ function ReportCard({ item }: { item: SessionWithReport }) {
       'Eventos',
       report.eventCount === 0
         ? 'Ninguno'
-        : `${report.bradycardiaCount} bradicardia · ${report.pauseCount} pausa${
+        : `⚠️ ${report.bradycardiaCount} bradicardia · ${report.pauseCount} pausa${
             report.pauseCount === 1 ? '' : 's'
           }`,
     ],
@@ -79,7 +80,9 @@ function ReportCard({ item }: { item: SessionWithReport }) {
   ];
 
   return (
-    <ThemedView type="backgroundElement" style={styles.card}>
+    <ThemedView
+      type="backgroundElement"
+      style={[styles.card, hasEvents && styles.cardWithEvents]}>
       <ThemedView style={styles.cardHeader}>
         <ThemedText type="smallBold" style={styles.cardTitle}>
           {formatRange(session.startedAt, session.endedAt)}
@@ -199,9 +202,11 @@ function WeeklyCard({ weekly }: { weekly: WeeklyReport }) {
 }
 
 export default function ReportsScreen() {
+  const theme = useTheme();
   const thresholds = useMonitorStore((s) => s.thresholds);
   const [items, setItems] = useState<SessionWithReport[]>([]);
   const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
+  const [onlyWithEvents, setOnlyWithEvents] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -228,19 +233,38 @@ export default function ReportsScreen() {
         <ThemedText type="subtitle" style={styles.title}>
           Informes
         </ThemedText>
+        {items.some((i) => i.report.eventCount > 0) && (
+          <Pressable
+            onPress={() => setOnlyWithEvents((v) => !v)}
+            style={[
+              styles.filterChip,
+              {
+                backgroundColor: onlyWithEvents
+                  ? theme.backgroundSelected
+                  : theme.backgroundElement,
+              },
+            ]}>
+            <ThemedText type="small">⚠️ Solo con eventos</ThemedText>
+          </Pressable>
+        )}
         <FlatList
           ListHeaderComponent={
-            weekly && weekly.sessionsCount > 0 ? (
+            weekly && weekly.sessionsCount > 0 && !onlyWithEvents ? (
               <WeeklyCard weekly={weekly} />
             ) : null
           }
-          data={items}
+          data={
+            onlyWithEvents
+              ? items.filter((i) => i.report.eventCount > 0)
+              : items
+          }
           keyExtractor={(i) => String(i.session.id)}
           contentContainerStyle={{ paddingBottom: BottomTabInset }}
           ListEmptyComponent={
             <ThemedText type="small" themeColor="textSecondary">
-              Aún no hay sesiones. El informe aparece al terminar de
-              monitorizar.
+              {onlyWithEvents && items.length > 0
+                ? 'Ninguna sesión con eventos.'
+                : 'Aún no hay sesiones. El informe aparece al terminar de monitorizar.'}
             </ThemedText>
           }
           renderItem={({ item }) => <ReportCard item={item} />}
@@ -259,6 +283,17 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     marginBottom: Spacing.two,
     gap: Spacing.one,
+  },
+  cardWithEvents: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#D32F2F',
+  },
+  filterChip: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    marginBottom: Spacing.two,
   },
   exportButton: {
     borderRadius: Spacing.two,
