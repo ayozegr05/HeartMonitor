@@ -1,7 +1,10 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useEffect, useState } from 'react';
 import { Animated, FlatList, Pressable, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -45,6 +48,18 @@ export default function MonitorScreen() {
   } = useMonitorStore();
 
   const streaming = connectionState === 'streaming';
+  const insets = useSafeAreaInsets();
+
+  // Honest readout: a link that delivers nothing for a while is not
+  // 'monitoring'. Tick only while streaming so the check re-renders.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!streaming) return;
+    const t = setInterval(() => setNow(Date.now()), 2_000);
+    return () => clearInterval(t);
+  }, [streaming]);
+  const staleData =
+    streaming && (!currentReading || now - currentReading.timestamp > 8_000);
 
   const [pulse] = useState(() => new Animated.Value(1));
   const liveBpm = currentReading?.bpm ?? 60;
@@ -117,14 +132,17 @@ export default function MonitorScreen() {
   };
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView
+      style={[styles.container, { paddingTop: insets.top }]}>
 
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={styles.safeArea} edges={['bottom']}>
         {/* Big live BPM readout */}
         <ThemedView style={styles.hero}>
           <ThemedText type="small" themeColor="textSecondary">
-            {streaming && !currentReading
-              ? 'Conectado — esperando FC'
+            {staleData
+              ? currentReading
+                ? 'Sin datos nuevos — revisa el reloj'
+                : 'Conectado — esperando FC'
               : STATE_LABELS[connectionState]}
             {connectionState === 'reconnecting' && reconnectAttempt > 0
               ? ` (intento ${reconnectAttempt})`
@@ -217,7 +235,7 @@ export default function MonitorScreen() {
                     ? `Reconectando a ${bleDevice.label}…`
                     : `✓ ${bleDevice.label} conectado`}
                 </ThemedText>
-                {streaming && !currentReading && (
+                {staleData && (
                   <ThemedText type="small" themeColor="textSecondary">
                     Esperando datos — activa «Emitir FC» en el reloj
                   </ThemedText>
@@ -268,6 +286,8 @@ export default function MonitorScreen() {
           </ThemedText>
         )}
 
+        <ThemedView style={styles.spacer} />
+
         <Pressable
           onPress={() =>
             streaming ? stop() : mode === 'mock' ? startMock(scenario) : undefined
@@ -304,10 +324,10 @@ const styles = StyleSheet.create({
   hero: {
     alignItems: 'center',
     gap: Spacing.one,
-    flex: 1,
-    justifyContent: 'center',
-    paddingVertical: Spacing.two,
+    paddingTop: Spacing.five,
+    paddingBottom: Spacing.three,
   },
+  spacer: { flex: 1 },
   heart: { fontSize: 60 },
   bpm: { fontSize: 80, fontWeight: 700, lineHeight: 88 },
   alertBox: {
