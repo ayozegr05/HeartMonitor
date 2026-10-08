@@ -24,6 +24,7 @@ const STATE_LABELS: Record<string, string> = {
   connecting: 'Conectando…',
   streaming: 'Monitorizando',
   disconnected: 'Desconectado',
+  reconnecting: 'Reconectando…',
   error: 'Error',
 };
 
@@ -35,6 +36,8 @@ export default function MonitorScreen() {
     lastEvent,
     eventCount,
     sensorLabel,
+    bleDevice,
+    reconnectAttempt,
     startMock,
     startBle,
     stop,
@@ -90,6 +93,9 @@ export default function MonitorScreen() {
         <ThemedView style={styles.hero}>
           <ThemedText type="small" themeColor="textSecondary">
             {STATE_LABELS[connectionState]}
+            {connectionState === 'reconnecting' && reconnectAttempt > 0
+              ? ` (intento ${reconnectAttempt})`
+              : ''}
             {sensorLabel ? ` · ${sensorLabel}` : ''}
           </ThemedText>
           <ThemedText style={styles.bpm}>
@@ -159,6 +165,15 @@ export default function MonitorScreen() {
                 {scanning ? 'Buscando…' : 'Buscar sensores BLE'}
               </ThemedText>
             </Pressable>
+            {bleDevice && !streaming && connectionState !== 'reconnecting' && (
+              <Pressable
+                onPress={() => connectTo({ id: bleDevice.id, name: bleDevice.label })}
+                style={[styles.button, { backgroundColor: theme.backgroundSelected }]}>
+                <ThemedText type="smallBold">
+                  Reconectar a {bleDevice.label}
+                </ThemedText>
+              </Pressable>
+            )}
             <FlatList
               data={devices}
               keyExtractor={(d) => d.id}

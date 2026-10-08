@@ -6,6 +6,7 @@ import { useColorScheme } from 'react-native';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import { initializeDatabase } from '@/data/db';
+import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import {
     configureNotificationHandler,
     ensureNotificationSetup,
@@ -20,6 +21,9 @@ export default function TabLayout() {
   useEffect(() => {
     initializeDatabase().catch((e) => console.warn('DB init failed', e));
     ensureNotificationSetup().catch(() => {});
+    // If the app died mid-session (crash, process reclaim), pick up where
+    // it left off — the user's intent to monitor overnight was explicit.
+    void useMonitorStore.getState().resumeBleSession();
   }, []);
 
   return (
