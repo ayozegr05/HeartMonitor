@@ -207,6 +207,7 @@ export default function ReportsScreen() {
   const [items, setItems] = useState<SessionWithReport[]>([]);
   const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
   const [onlyWithEvents, setOnlyWithEvents] = useState(false);
+  const hasAnyEvents = items.some((i) => i.report.eventCount > 0);
 
   useFocusEffect(
     useCallback(() => {
@@ -233,7 +234,9 @@ export default function ReportsScreen() {
         <ThemedText type="subtitle" style={styles.title}>
           Informes
         </ThemedText>
-        {items.some((i) => i.report.eventCount > 0) && (
+        {/* Keep the toggle reachable while the filter is active, even if
+            the loaded sessions happen to contain no events right now. */}
+        {(hasAnyEvents || onlyWithEvents) && (
           <Pressable
             onPress={() => setOnlyWithEvents((v) => !v)}
             style={[
