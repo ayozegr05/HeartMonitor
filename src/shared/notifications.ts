@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 
 const ALERT_CHANNEL_ID = 'heart-alerts-v2';
 const LEGACY_CHANNEL_ID = 'heart-alerts';
+const SERVICE_CHANNEL_ID = 'RN_BACKGROUND_ACTIONS_CHANNEL';
 
 /**
  * Local notifications only — alerts are generated on-device, not pushed
@@ -26,6 +27,11 @@ export function configureNotificationHandler(): void {
 export async function ensureNotificationSetup(): Promise<boolean> {
   if (Platform.OS === 'android') {
     await Notifications.deleteNotificationChannelAsync(LEGACY_CHANNEL_ID);
+    await Notifications.deleteNotificationChannelAsync(SERVICE_CHANNEL_ID);
+    await Notifications.setNotificationChannelAsync(SERVICE_CHANNEL_ID, {
+      name: 'HeartMonitor activo',
+      importance: Notifications.AndroidImportance.MIN,
+    });
     await Notifications.setNotificationChannelAsync(ALERT_CHANNEL_ID, {
       name: 'Alertas cardíacas',
       importance: Notifications.AndroidImportance.MAX,
