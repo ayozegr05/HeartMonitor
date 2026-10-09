@@ -120,34 +120,11 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
             {streaming
               ? 'ECG en vivo'
               : state === 'error'
-                ? 'error'
+                ? 'error — sin señal'
                 : busy
                   ? 'conectando…'
                   : 'en pausa'}
           </ThemedText>
-          <Pressable
-            style={[
-              styles.ctrl,
-              streaming && { backgroundColor: '#B3261E' },
-            ]}
-            disabled={busy}
-            onPress={() => {
-              const src = sourceRef.current;
-              if (!src) return;
-              if (streaming) {
-                void src.stop();
-                setSamples([]);
-                buf.current = [];
-              } else {
-                src.start().catch(() => setState('error'));
-              }
-            }}>
-            <ThemedText
-              type="smallBold"
-              style={streaming ? { color: '#fff' } : undefined}>
-              {streaming ? 'Detener' : 'Iniciar'}
-            </ThemedText>
-          </Pressable>
         </View>
       </View>
 
@@ -205,6 +182,30 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
           )}
         </View>
       )}
+
+      {/* Big start/stop — same weight as the monitor's main button */}
+      <Pressable
+        style={[
+          styles.bigButton,
+          streaming ? styles.bigButtonStop : styles.bigButtonStart,
+          busy && { opacity: 0.5 },
+        ]}
+        disabled={busy}
+        onPress={() => {
+          const src = sourceRef.current;
+          if (!src) return;
+          if (streaming) {
+            void src.stop();
+            setSamples([]);
+            buf.current = [];
+          } else {
+            src.start().catch(() => setState('error'));
+          }
+        }}>
+        <ThemedText type="smallBold" style={styles.bigButtonText}>
+          {streaming ? 'Detener ECG' : 'Iniciar ECG'}
+        </ThemedText>
+      </Pressable>
 
       <View style={styles.controlsRow}>
         <Pressable
@@ -280,6 +281,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.three,
   },
+  bigButton: {
+    borderRadius: 10,
+    paddingVertical: Spacing.three,
+    alignItems: 'center',
+  },
+  bigButtonStart: { backgroundColor: '#2E7D32' },
+  bigButtonStop: { backgroundColor: '#B3261E' },
+  bigButtonText: { color: '#ffffff' },
   ctrl: {
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
