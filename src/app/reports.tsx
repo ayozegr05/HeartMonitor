@@ -20,7 +20,8 @@ import {
     buildWeeklyReport,
     type WeeklyReport,
 } from '@/domain/weeklyReport';
-import { getStrips, removeStrip, type CapturedStrip } from '@/features/ecg/stripStore';
+import { shareStripCsv, shareStripPdf } from '@/features/ecg/exportStrip';
+import { loadStrips, removeStrip, type CapturedStrip } from '@/features/ecg/stripStore';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { shareWeeklyPdf } from '@/features/reports/exportWeeklyPdf';
 import {
@@ -414,7 +415,6 @@ export default function ReportsScreen() {
       loadSessionReports(thresholds)
         .then((loaded) => {
           setItems(loaded);
-          setStrips([...getStrips()]);
           setWeekly(
             buildWeeklyReport(
               loaded.map((i) => i.report),
@@ -426,6 +426,9 @@ export default function ReportsScreen() {
           setItems([]);
           setWeekly(null);
         });
+      loadStrips()
+        .then((loaded) => setStrips([...loaded]))
+        .catch(() => setStrips([]));
     }, [thresholds]),
   );
 
@@ -463,7 +466,9 @@ export default function ReportsScreen() {
                   onOpen={setActiveStrip}
                   onDelete={(s) => {
                     removeStrip(s.timestamp);
-                    setStrips([...getStrips()]);
+                    setStrips((prev) =>
+                      prev.filter((x) => x.timestamp !== s.timestamp),
+                    );
                   }}
                 />
               )}
@@ -521,6 +526,42 @@ export default function ReportsScreen() {
                     </ThemedText>
                   ))}
                 </>
+              )}
+              {activeStrip && (
+                <View style={styles.stripButtons}>
+                  <Pressable
+                    onPress={() =>
+                      shareStripPdf(activeStrip).catch((e) =>
+                        Alert.alert(
+                          'No se pudo exportar',
+                          e instanceof Error ? e.message : 'Error desconocido',
+                        ),
+                      )
+                    }
+                    style={[
+                      styles.exportButton,
+                      styles.stripButton,
+                      { backgroundColor: theme.backgroundSelected },
+                    ]}>
+                    <ThemedText type="smallBold">PDF</ThemedText>
+                  </Pressable>
+                  <Pressable
+                    onPress={() =>
+                      shareStripCsv(activeStrip).catch((e) =>
+                        Alert.alert(
+                          'No se pudo exportar',
+                          e instanceof Error ? e.message : 'Error desconocido',
+                        ),
+                      )
+                    }
+                    style={[
+                      styles.exportButton,
+                      styles.stripButton,
+                      { backgroundColor: theme.backgroundSelected },
+                    ]}>
+                    <ThemedText type="smallBold">CSV</ThemedText>
+                  </Pressable>
+                </View>
               )}
               <Pressable
                 onPress={() => setActiveStrip(null)}
@@ -595,6 +636,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     gap: Spacing.two,
   },
+  stripButtons: { flexDirection: 'row', gap: Spacing.two },
+  stripButton: { flex: 1 },
   metricRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
