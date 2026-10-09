@@ -1,8 +1,9 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { EcgStrip } from '@/components/ecg-strip';
 import { HrChart } from '@/components/hr-chart';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -19,6 +20,7 @@ import {
     buildWeeklyReport,
     type WeeklyReport,
 } from '@/domain/weeklyReport';
+import { getStrips, removeStrip, type CapturedStrip } from '@/features/ecg/stripStore';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { shareWeeklyPdf } from '@/features/reports/exportWeeklyPdf';
 import {
@@ -342,12 +344,69 @@ function WeeklyCard({ weekly }: { weekly: WeeklyReport }) {
   );
 }
 
+function StripsCard({
+  strips,
+  onOpen,
+  onDelete,
+}: {
+  strips: CapturedStrip[];
+  onOpen: (s: CapturedStrip) => void;
+  onDelete: (s: CapturedStrip) => void;
+}) {
+  const theme = useTheme();
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          Tiras ECG capturadas
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {strips.length} tira{strips.length === 1 ? '' : 's'} de 30 s · toca para ver
+        </ThemedText>
+      </ThemedView>
+      {strips.map((s) => {
+        const when = new Date(s.timestamp).toLocaleTimeString(undefined, {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        return (
+          <Pressable
+            key={s.timestamp}
+            onPress={() => onOpen(s)}
+            onLongPress={() => onDelete(s)}
+            style={({ pressed }) => [
+              styles.stripRow,
+              { backgroundColor: theme.background, opacity: pressed ? 0.7 : 1 },
+            ]}>
+            <ThemedText type="smallBold">
+              {when} · {s.report.meanBpm} bpm
+            </ThemedText>
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              style={{ color: s.report.flags.length > 0 ? '#FFB020' : '#2E7D32' }}>
+              {s.report.flags.length > 0
+                ? `⚠️ ${s.report.flags.length} aviso${s.report.flags.length === 1 ? '' : 's'}`
+                : '✓ sin avisos'}
+            </ThemedText>
+          </Pressable>
+        );
+      })}
+      <ThemedText type="small" themeColor="textSecondary">
+        Mantén pulsada una tira para borrarla.
+      </ThemedText>
+    </ThemedView>
+  );
+}
+
 export default function ReportsScreen() {
   const theme = useTheme();
   const thresholds = useMonitorStore((s) => s.thresholds);
   const [items, setItems] = useState<SessionWithReport[]>([]);
   const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
   const [onlyWithEvents, setOnlyWithEvents] = useState(false);
+  const [strips, setStrips] = useState<CapturedStrip[]>([]);
+  const [activeStrip, setActiveStrip] = useState<CapturedStrip | null>(null);
   const hasAnyEvents = items.some((i) => i.report.eventCount > 0);
 
   useFocusEffect(
@@ -355,6 +414,7 @@ export default function ReportsScreen() {
       loadSessionReports(thresholds)
         .then((loaded) => {
           setItems(loaded);
+          setStrips([...getStrips()]);
           setWeekly(
             buildWeeklyReport(
               loaded.map((i) => i.report),
@@ -393,9 +453,21 @@ export default function ReportsScreen() {
         )}
         <FlatList
           ListHeaderComponent={
-            weekly && weekly.sessionsCount > 0 && !onlyWithEvents ? (
-              <WeeklyCard weekly={weekly} />
-            ) : null
+            <>
+              {weekly && weekly.sessionsCount > 0 && !onlyWithEvents && (
+                <WeeklyCard weekly={weekly} />
+              )}
+              {strips.length > 0 && !onlyWithEvents && (
+                <StripsCard
+                  strips={strips}
+                  onOpen={setActiveStrip}
+                  onDelete={(s) => {
+                    removeStrip(s.timestamp);
+                    setStrips([...getStrips()]);
+                  }}
+                />
+              )}
+            </>
           }
           data={
             onlyWithEvents
@@ -415,6 +487,52 @@ export default function ReportsScreen() {
             <ReportCard item={item} thresholds={thresholds} />
           )}
         />
+        <Modal
+          visible={activeStrip !== null}
+          animationType="slide"
+          onRequestClose={() => setActiveStrip(null)}>
+          <ThemedView style={styles.stripModal}>
+            <SafeAreaView style={styles.stripModalInner}>
+              <ThemedText type="smallBold">Tira ECG · 30 s</ThemedText>
+              {activeStrip && (
+                <>
+                  <EcgStrip samples={activeStrip.samples} height={240} />
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {new Date(activeStrip.timestamp).toLocaleString(undefined, {
+                      day: 'numeric',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                    {' · '}
+                    {activeStrip.report.meanBpm} bpm · QRS{' '}
+                    {Math.round(activeStrip.report.meanQrsWidthMs)} ms
+                    {activeStrip.report.meanPrMs !== undefined &&
+                      ` · PR ${activeStrip.report.meanPrMs} ms`}
+                    {activeStrip.report.droppedBeats > 0 &&
+                      ` · ${activeStrip.report.droppedBeats} bloqueados`}
+                  </ThemedText>
+                  {activeStrip.report.flags.map((f) => (
+                    <ThemedText
+                      key={f}
+                      type="small"
+                      style={{ color: '#FFB020' }}>
+                      ⚠️ {f}
+                    </ThemedText>
+                  ))}
+                </>
+              )}
+              <Pressable
+                onPress={() => setActiveStrip(null)}
+                style={[
+                  styles.exportButton,
+                  { backgroundColor: theme.backgroundElement },
+                ]}>
+                <ThemedText type="smallBold">Cerrar</ThemedText>
+              </Pressable>
+            </SafeAreaView>
+          </ThemedView>
+        </Modal>
       </SafeAreaView>
     </ThemedView>
   );
@@ -464,6 +582,19 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
   },
   eventList: { gap: 4, paddingTop: Spacing.one },
+  stripRow: {
+    borderRadius: Spacing.two,
+    padding: Spacing.two,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  stripModal: { flex: 1 },
+  stripModalInner: {
+    flex: 1,
+    paddingHorizontal: Spacing.four,
+    gap: Spacing.two,
+  },
   metricRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

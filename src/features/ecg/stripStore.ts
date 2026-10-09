@@ -22,6 +22,11 @@ export function getStrips(): readonly CapturedStrip[] {
   return strips;
 }
 
+export function removeStrip(timestamp: number): void {
+  const i = strips.findIndex((s) => s.timestamp === timestamp);
+  if (i >= 0) strips.splice(i, 1);
+}
+
 export function clearStrips(): void {
   strips.length = 0;
 }
