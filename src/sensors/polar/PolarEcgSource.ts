@@ -1,5 +1,6 @@
 import type { Device } from 'react-native-ble-plx';
 
+import { acquireBleLink, releaseBleLink } from '../bleLink';
 import type { EcgFrame, IEcgSource } from '../ecg';
 import type { SensorConnectionState } from '../types';
 import {
@@ -88,6 +89,7 @@ export class PolarEcgSource implements IEcgSource {
     if (!dev) throw new Error('No Polar device');
     this.device = dev;
     await dev.connect();
+    acquireBleLink();
     await dev.discoverAllServicesAndCharacteristics();
 
     // Ack waiter: the control point echoes the op with a status byte.
@@ -171,6 +173,7 @@ export class PolarEcgSource implements IEcgSource {
     }
     for (const s of this.subs) s.remove();
     this.subs = [];
+    await releaseBleLink(this.device);
     this.setState('idle');
   }
 
