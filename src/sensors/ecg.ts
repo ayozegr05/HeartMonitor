@@ -22,4 +22,10 @@ export interface IEcgSource {
   stop(): Promise<void>;
   subscribe(listener: (frame: EcgFrame) => void): () => void;
   onStateChange(listener: (state: SensorConnectionState) => void): () => void;
+  /**
+   * Optional diagnostic snapshot for on-screen debugging — real-device
+   * streams surface negotiated MTU, the last control ack and frame
+   * counters here so failures are readable without a debugger.
+   */
+  getDebugInfo?(): Record<string, string | number>;
 }

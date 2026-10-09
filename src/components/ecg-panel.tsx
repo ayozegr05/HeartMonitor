@@ -155,6 +155,10 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
         </ThemedText>
       ))}
 
+      {/* On-device diagnostics — invaluable when debugging a real strap
+          where no debugger is attached. */}
+      <DebugLine sourceRef={sourceRef} />
+
       {isMock && (
         <View style={styles.chipRow}>
           {(Object.keys(MOCK_ECG_SCENARIO_LABELS) as MockEcgScenario[]).map(
@@ -249,6 +253,28 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
   );
 }
 
+function DebugLine({
+  sourceRef,
+}: {
+  sourceRef: { current: IEcgSource | null };
+}) {
+  const [info, setInfo] = useState<Record<string, string | number>>({});
+  useEffect(() => {
+    const t = setInterval(() => {
+      const d = sourceRef.current?.getDebugInfo?.();
+      if (d) setInfo(d);
+    }, 500);
+    return () => clearInterval(t);
+  }, [sourceRef]);
+  const entries = Object.entries(info);
+  if (entries.length === 0) return null;
+  return (
+    <ThemedText type="small" themeColor="textSecondary" style={styles.debug}>
+      {entries.map(([k, v]) => `${k} ${v}`).join(' · ')}
+    </ThemedText>
+  );
+}
+
 const styles = StyleSheet.create({
   panel: { gap: Spacing.two },
   headerRow: {
@@ -262,6 +288,7 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   statsRow: { flexDirection: 'row', gap: Spacing.three },
+  debug: { opacity: 0.6, fontSize: 10 },
   flag: { color: '#FFB020' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
   chip: {
