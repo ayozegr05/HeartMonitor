@@ -9,7 +9,6 @@ import {
   CONTROL_OP,
   CONTROL_STATUS,
   ECG_SAMPLE_RATE_HZ,
-  ecgRefBytes,
   MEASUREMENT_TYPE,
   parseControlResponse,
   parsePmdData,
@@ -46,7 +45,7 @@ function bytesToBase64(bytes: Uint8Array): string {
  * Polar H10 raw-ECG stream via the PMD service — second BLE service on
  * the strap itself. No Polar SDK, no account, no cloud: the control
  * point takes a START command and the data characteristic streams
- * delta-compressed ECG frames until STOP or disconnect.
+ * raw ECG frames (3-byte signed µV samples) until STOP or disconnect.
  *
  * The strap keeps serving the standard HR service at the same time, so
  * the monitoring session is untouched — ECG is a parallel on-demand
@@ -58,6 +57,8 @@ export class PolarEcgSource implements IEcgSource {
   private stateListeners = new Set<(s: SensorConnectionState) => void>();
   private subs: { remove(): void }[] = [];
   private device: Device | null = null;
+  private sawData = false;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * @param device the connected strap, or a resolver returning one
@@ -90,11 +91,19 @@ export class PolarEcgSource implements IEcgSource {
     this.device = dev;
     await dev.connect();
     acquireBleLink();
+    // The H10 rejects START with ERROR_INVALID_MTU when the negotiated
+    // MTU is too small — Android defaults to 23 bytes, so ask for the
+    // maximum. iOS negotiates this itself; requestMTU throws there.
+    try {
+      await dev.requestMTU(512);
+    } catch {
+      // platform handles MTU — fine
+    }
     await dev.discoverAllServicesAndCharacteristics();
 
     // Ack waiter: the control point echoes the op with a status byte.
-    let ackResolve: ((ok: boolean) => void) | null = null;
-    const ack = new Promise<boolean>((r) => (ackResolve = r));
+    let ackResolve: ((status: number) => void) | null = null;
+    const ack = new Promise<number>((r) => (ackResolve = r));
     this.subs.push(
       dev.monitorCharacteristicForService(
         PMD_SERVICE_UUID,
@@ -105,9 +114,10 @@ export class PolarEcgSource implements IEcgSource {
             const r = parseControlResponse(base64ToBytes(c.value));
             if (
               r.opCode === CONTROL_OP.START_MEASUREMENT &&
+              r.measurementType === MEASUREMENT_TYPE.ECG &&
               ackResolve
             ) {
-              ackResolve(r.status === CONTROL_STATUS.SUCCESS);
+              ackResolve(r.status);
               ackResolve = null;
             }
           } catch {
@@ -124,11 +134,9 @@ export class PolarEcgSource implements IEcgSource {
         (error, c) => {
           if (error || !c?.value) return;
           try {
-            const f = parsePmdData(
-              base64ToBytes(c.value),
-              ecgRefBytes(),
-            );
+            const f = parsePmdData(base64ToBytes(c.value));
             if (f.measurementType !== MEASUREMENT_TYPE.ECG) return;
+            this.sawData = true;
             const frame: EcgFrame = {
               samples: f.samples,
               sampleRateHz: ECG_SAMPLE_RATE_HZ,
@@ -150,15 +158,26 @@ export class PolarEcgSource implements IEcgSource {
 
     // The strap may ack after we already get frames; a timeout simply
     // means "no ack packet", which is non-fatal.
-    const ok = await Promise.race([
+    const status = await Promise.race([
       ack,
-      new Promise<boolean>((r) => setTimeout(() => r(true), 3_000)),
+      new Promise<number>((r) =>
+        setTimeout(() => r(CONTROL_STATUS.SUCCESS), 3_000),
+      ),
     ]);
-    if (!ok) {
+    if (status !== CONTROL_STATUS.SUCCESS) {
       await this.stop();
-      throw new Error('Polar PMD start rejected');
+      throw new Error(`Polar PMD start rejected (status ${status})`);
     }
     this.setState('streaming');
+
+    // Watchdog: if the stream produced no samples after a few seconds,
+    // surface it instead of sitting on a flatline forever.
+    this.watchdog = setTimeout(() => {
+      if (!this.sawData) {
+        void this.stop();
+        this.setState('error');
+      }
+    }, 5_000);
   }
 
   async stop(): Promise<void> {
@@ -171,6 +190,11 @@ export class PolarEcgSource implements IEcgSource {
     } catch {
       // already gone — fine
     }
+    if (this.watchdog) {
+      clearTimeout(this.watchdog);
+      this.watchdog = null;
+    }
+    this.sawData = false;
     for (const s of this.subs) s.remove();
     this.subs = [];
     await releaseBleLink(this.device);

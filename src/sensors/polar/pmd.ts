@@ -56,6 +56,17 @@ export const CONTROL_OP = {
 /** Response marker byte on control-point notifications. */
 export const CONTROL_RESPONSE = 0xf0;
 
+/**
+ * Control-point response layout (verified against the official
+ * polar-ble-sdk `PmdControlPointResponse`):
+ *   [0] 0xF0 marker
+ *   [1] op code echoed
+ *   [2] measurement type
+ *   [3] status code
+ *   [4] 'more' flag (only when status == SUCCESS)
+ *   [5..] parameters (only when more)
+ */
+
 export const CONTROL_STATUS = {
   SUCCESS: 0x00,
   INVALID_OP_CODE: 0x01,
@@ -78,12 +89,22 @@ export const CONTROL_STATUS = {
 export const ECG_SAMPLE_RATE_HZ = 130;
 export const ECG_RESOLUTION_BITS = 14;
 
-/** PMD data frame types (byte 9 of the data header). */
+/** Raw ECG samples are 3 bytes signed little-endian (µV). */
+export const ECG_SAMPLE_BYTES = 3;
+
+/**
+ * PMD data frame type field (byte 9 of the data header):
+ * bit 7 set → delta-compressed frame (ACC/PPG/…; never ECG — the
+ * official SDK rejects compressed ECG frames outright), the low 7
+ * bits hold the frame type.
+ */
+export const DELTA_FRAME_BIT = 0x80;
+export const FRAME_TYPE_MASK = 0x7f;
 export const FRAME_TYPE = {
-  /** Delta-compressed frames — what the H10 sends for ECG/ACC/… */
-  COMPRESSED: 0x00,
-  /** Raw (uncompressed) samples. */
-  RAW: 0x01,
+  /** Raw frame, type 0 — what the H10 sends for ECG. */
+  RAW: 0x00,
+  /** Delta-compressed frame marker (frame byte = type | 0x80). */
+  COMPRESSED: 0x80,
 } as const;
 
 /** Header layout of a PMD data notification. */
@@ -100,8 +121,9 @@ export interface PmdDataFrame {
 
 export interface PmdControlResponse {
   opCode: number;
+  measurementType: number;
   status: number;
-  /** Raw bytes after the status byte (e.g. echoed settings). */
+  /** Raw bytes after the 'more' flag byte (e.g. echoed settings). */
   params: Uint8Array;
 }
 
@@ -132,12 +154,31 @@ function readSignedLe(
   return value;
 }
 
+/**
+ * Field size per setting type (from the SDK's `typeToFieldSize`):
+ * SAMPLE_RATE 2, RESOLUTION 2, RANGE 2, CHANNELS 1 — sending a
+ * CHANNELS uint16 leaves a stray byte the firmware reads as another
+ * setting → ERROR_INVALID_LENGTH.
+ */
+const SETTING_FIELD_SIZE: Record<number, number> = {
+  [SETTING_TYPE.SAMPLE_RATE]: 2,
+  [SETTING_TYPE.RESOLUTION]: 2,
+  [SETTING_TYPE.RANGE]: 2,
+  [SETTING_TYPE.CHANNELS]: 1,
+};
+
 function pushSetting(out: number[], type: number, value: number): void {
-  // [setting_type][array_size=1][value uint16 LE]
-  out.push(type, 1, value & 0xff, (value >> 8) & 0xff);
+  const fieldSize = SETTING_FIELD_SIZE[type] ?? 2;
+  // [setting_type][count=1][value LE, fieldSize bytes]
+  out.push(type, 1);
+  for (let i = 0; i < fieldSize; i++) out.push((value >> (8 * i)) & 0xff);
 }
 
-/** Command to start the ECG stream (130 Hz, 14-bit, single channel). */
+/**
+ * Command to start the ECG stream (130 Hz, 14-bit). Matches the
+ * official example `02 00 00 01 82 00 01 01 0e 00` — ECG takes no
+ * CHANNELS setting (single lead, fixed).
+ */
 export function buildStartEcgCommand(): Uint8Array {
   const out: number[] = [
     CONTROL_OP.START_MEASUREMENT,
@@ -145,7 +186,6 @@ export function buildStartEcgCommand(): Uint8Array {
   ];
   pushSetting(out, SETTING_TYPE.SAMPLE_RATE, ECG_SAMPLE_RATE_HZ);
   pushSetting(out, SETTING_TYPE.RESOLUTION, ECG_RESOLUTION_BITS);
-  pushSetting(out, SETTING_TYPE.CHANNELS, 1);
   return Uint8Array.from(out);
 }
 
@@ -159,12 +199,20 @@ export function buildGetSettingsCommand(
   return Uint8Array.from([CONTROL_OP.GET_MEASUREMENT_SETTINGS, type]);
 }
 
-/** Parse a control-point notification into a typed response. */
+/**
+ * Parse a control-point notification into a typed response.
+ * Layout: [0xF0][op][measurement_type][status][more?][params...]
+ */
 export function parseControlResponse(bytes: Uint8Array): PmdControlResponse {
-  if (bytes.length < 3 || bytes[0] !== CONTROL_RESPONSE) {
+  if (bytes.length < 4 || bytes[0] !== CONTROL_RESPONSE) {
     throw new Error('Not a PMD control response');
   }
-  return { opCode: bytes[1], status: bytes[2], params: bytes.slice(3) };
+  return {
+    opCode: bytes[1],
+    measurementType: bytes[2],
+    status: bytes[3],
+    params: bytes.length > 5 ? bytes.slice(5) : new Uint8Array(0),
+  };
 }
 
 /**
@@ -206,28 +254,31 @@ function unpackDeltas(
  *   [1-8] timestamp ns (uint64 LE)
  *   [9]   frame type (0 = delta-compressed, 1 = raw)
  *
- * Compressed payload = repeated delta frames:
+ * Compressed payload (delta frames, used by ACC/PPG/… — never ECG):
  *   ref_sample:   `refBytes` signed LE
- *   delta_ts:     8 bytes uint64 LE (ns, relative to header ts)
  *   delta_size:   1 byte  (bits per delta)
  *   sample_count: 1 byte  (number of deltas that follow)
  *   deltas:       ceil(delta_size * count / 8) bytes, packed
  *
  * Each decoded sample = ref_sample + cumulative sum of deltas.
+ * (No per-frame timestamp — the header timestamp covers it.)
  */
 export function parsePmdData(
   bytes: Uint8Array,
-  refBytes: number,
+  refBytes: number = ECG_SAMPLE_BYTES,
 ): PmdDataFrame {
   if (bytes.length < HEADER_SIZE) {
     throw new Error('PMD data frame too short');
   }
   const measurementType = bytes[0];
   const timestampNs = readUint64Le(bytes, 1);
-  const frameType = bytes[9];
+  const frameTypeByte = bytes[9];
+  const compressed = (frameTypeByte & DELTA_FRAME_BIT) !== 0;
+  const frameType = frameTypeByte & FRAME_TYPE_MASK;
   const payload = bytes.subarray(HEADER_SIZE);
 
-  if (frameType === FRAME_TYPE.RAW) {
+  if (!compressed) {
+    // Raw frame: N signed LE samples of `refBytes` each.
     const samples: number[] = [];
     for (let i = 0; i + refBytes <= payload.length; i += refBytes) {
       samples.push(readSignedLe(payload, i, refBytes));
@@ -238,11 +289,10 @@ export function parsePmdData(
   const samples: number[] = [];
   let pos = 0;
   while (pos < payload.length) {
-    const minFrame = refBytes + 8 + 1 + 1;
+    const minFrame = refBytes + 1 + 1;
     if (pos + minFrame > payload.length) break;
     const ref = readSignedLe(payload, pos, refBytes);
     pos += refBytes;
-    pos += 8; // delta timestamp — not needed for display
     const deltaSize = payload[pos];
     const count = payload[pos + 1];
     pos += 2;
@@ -257,9 +307,4 @@ export function parsePmdData(
     }
   }
   return { measurementType, timestampNs, frameType, samples };
-}
-
-/** Bytes per ECG reference sample given the 14-bit resolution. */
-export function ecgRefBytes(resolutionBits = ECG_RESOLUTION_BITS): number {
-  return Math.ceil(resolutionBits / 8);
 }
