@@ -31,11 +31,17 @@ export function EcgStrip({
   }
   let lo = Infinity;
   let hi = -Infinity;
-  for (const v of samples) {
+  const sorted = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    const v = samples[i];
+    sorted[i] = v;
     if (v < lo) lo = v;
     if (v > hi) hi = v;
   }
-  const mid = (lo + hi) / 2;
+  sorted.sort((a, b) => a - b);
+  // Anchor to the baseline (median), not the min→max midpoint: the R
+  // spike lifts that midpoint, so zooming on it pushed the trace up.
+  const mid = sorted[n >> 1];
   const halfSpan = Math.max(50, ((hi - lo) / 2) * 1.15);
   const scaled = halfSpan / Math.max(0.05, gain);
   const y = (v: number) =>
