@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 const TRACE_COLOR = '#2ECC71';
@@ -24,24 +24,37 @@ export function EcgStrip({ samples, gain = 1, height = 260 }: EcgStripProps) {
   const onLayout = (e: LayoutChangeEvent) =>
     setWidth(Math.round(e.nativeEvent.layout.width));
 
+  // Smoothed scale/centre: when a tall R exits the window the raw span
+  // would shrink instantly and the whole trace would jump up — lerp
+  // towards the target in an effect (refs can't be touched in render).
+  const filter = useRef<{ mid: number; span: number } | null>(null);
+  const [view, setView] = useState({ mid: 0, span: 1 });
+
   const n = samples.length;
+  useEffect(() => {
+    if (n === 0) return;
+    const sorted = [...samples].sort((a, b) => a - b);
+    const midTarget = sorted[n >> 1];
+    // Robust scale: 99th-percentile span — a single artefact spike
+    // can't stretch the strip out of shape.
+    const p99 =
+      sorted[Math.min(n - 1, Math.floor(n * 0.99))] -
+      sorted[Math.floor(n * 0.01)];
+    const spanTarget = Math.max(50, (p99 / 2) * 1.15);
+    if (filter.current === null) {
+      filter.current = { mid: midTarget, span: spanTarget };
+    } else {
+      filter.current.mid += (midTarget - filter.current.mid) * 0.12;
+      filter.current.span += (spanTarget - filter.current.span) * 0.12;
+    }
+    setView({ mid: filter.current.mid, span: filter.current.span });
+  }, [samples, n]);
+
   const points: { x: number; y: number }[] = [];
 
   if (n > 0 && width > 0) {
-    let lo = Infinity;
-    let hi = -Infinity;
-    const sorted = new Array<number>(n);
-    for (let i = 0; i < n; i++) {
-      const v = samples[i];
-      sorted[i] = v;
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
-    }
-    sorted.sort((a, b) => a - b);
-    // Anchor to the baseline (median), not the min→max midpoint: the R
-    // spike lifts that midpoint, so zooming on it pushed the trace up.
-    const mid = sorted[n >> 1];
-    const halfSpan = Math.max(50, ((hi - lo) / 2) * 1.15);
+    const mid = view.mid;
+    const halfSpan = view.span;
     const scaled = halfSpan / Math.max(0.05, gain);
     const y = (v: number) =>
       Math.max(

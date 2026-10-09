@@ -116,6 +116,9 @@ export class PolarEcgSource implements IEcgSource {
     this.framesRx = 0;
     this.samplesRx = 0;
     this.ackStatus = '—';
+    this.lastError = '';
+    this.framesBad = 0;
+    this.lastHex = '';
     const dev =
       this.device ?? (await this.resolveDevice?.());
     if (!dev) throw new Error('No Polar device');
@@ -175,45 +178,62 @@ export class PolarEcgSource implements IEcgSource {
       ),
     );
 
-    this.subs.push(
-      dev.monitorCharacteristicForService(
-        PMD_SERVICE_UUID,
-        PMD_DATA_UUID,
-        (error, c) => {
-          if (error) {
-            this.lastError = `data ${error.errorCode ?? error.message}`;
-            return;
-          }
-          if (!c?.value) return;
-          const raw = base64ToBytes(c.value);
-          // First 10 bytes as hex — identifies the frame type/version
-          // the firmware actually sends without a debugger attached.
-          this.lastHex = Array.from(raw.subarray(0, 10))
-            .map((b) => b.toString(16).padStart(2, '0'))
-            .join('');
-          try {
-            const f = parsePmdData(raw);
-            if (f.measurementType !== MEASUREMENT_TYPE.ECG) return;
-            this.sawData = true;
-            this.lastFrameAt = Date.now();
-            // Self-heal: data arriving after a watchdog error means
-            // the strap was just slow, not dead.
-            if (this.currentState === 'error') this.setState('streaming');
-            this.framesRx += 1;
-            this.samplesRx += f.samples.length;
-            const frame: EcgFrame = {
-              samples: f.samples,
-              sampleRateHz: ECG_SAMPLE_RATE_HZ,
-              timestamp: Date.now(),
-            };
-            for (const l of this.listeners) l(frame);
-          } catch (e) {
-            this.framesBad += 1;
-            this.lastError = `parse ${String(e).slice(0, 40)}`;
-          }
-        },
-      ),
-    );
+    // The data subscription gets cancelled by Android now and then
+    // (ble-plx error 201, seen on the real strap: first frames=0 or a
+    // mid-stream flatline). Monitor with auto-retry — as long as the
+    // source is streaming, a cancelled subscription re-subscribes.
+    const subscribeData = (attempt: number) => {
+      this.subs.push(
+        dev.monitorCharacteristicForService(
+          PMD_SERVICE_UUID,
+          PMD_DATA_UUID,
+          (error, c) => {
+            if (error) {
+              this.lastError = `data ${error.errorCode ?? error.message}`;
+              if (
+                this.currentState === 'streaming' &&
+                attempt < 8
+              ) {
+                setTimeout(() => subscribeData(attempt + 1), 400);
+              }
+              return;
+            }
+            if (!c?.value) return;
+            const raw = base64ToBytes(c.value);
+            // First 10 bytes as hex — identifies the frame type/version
+            // the firmware actually sends without a debugger attached.
+            this.lastHex = Array.from(raw.subarray(0, 10))
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join('');
+            try {
+              const f = parsePmdData(raw);
+              if (f.measurementType !== MEASUREMENT_TYPE.ECG) return;
+              this.sawData = true;
+              this.lastFrameAt = Date.now();
+              // Self-heal: data arriving after a watchdog error means
+              // the strap was just slow, not dead.
+              if (this.currentState === 'error') this.setState('streaming');
+              this.framesRx += 1;
+              this.samplesRx += f.samples.length;
+              const frame: EcgFrame = {
+                samples: f.samples,
+                sampleRateHz: ECG_SAMPLE_RATE_HZ,
+                timestamp: Date.now(),
+              };
+              for (const l of this.listeners) l(frame);
+            } catch (e) {
+              this.framesBad += 1;
+              this.lastError = `parse ${String(e).slice(0, 40)}`;
+            }
+          },
+        ),
+      );
+    };
+    // Let the control-point CCC write settle before opening the data
+    // subscription — back-to-back descriptor writes are what Android
+    // tends to cancel on this strap.
+    await new Promise((r) => setTimeout(r, 300));
+    subscribeData(0);
 
     await dev.writeCharacteristicWithResponseForService(
       PMD_SERVICE_UUID,
