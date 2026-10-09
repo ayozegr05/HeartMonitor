@@ -59,6 +59,7 @@ export class PolarEcgSource implements IEcgSource {
   private device: Device | null = null;
   private sawData = false;
   private watchdog: ReturnType<typeof setTimeout> | null = null;
+  private currentState: SensorConnectionState = 'idle';
   private mtu = 0;
   private ackStatus: string = '—';
   private framesRx = 0;
@@ -195,6 +196,9 @@ export class PolarEcgSource implements IEcgSource {
             if (f.measurementType !== MEASUREMENT_TYPE.ECG) return;
             this.sawData = true;
             this.lastFrameAt = Date.now();
+            // Self-heal: data arriving after a watchdog error means
+            // the strap was just slow, not dead.
+            if (this.currentState === 'error') this.setState('streaming');
             this.framesRx += 1;
             this.samplesRx += f.samples.length;
             const frame: EcgFrame = {
@@ -234,14 +238,13 @@ export class PolarEcgSource implements IEcgSource {
     }
     this.setState('streaming');
 
-    // Watchdog: if the stream produced no samples after a few seconds,
-    // surface it instead of sitting on a flatline forever.
+    // Watchdog: surface silence instead of pretending to stream — but
+    // never kill the link. First-use service discovery can push the
+    // first frame past a naive 5 s window, and stopping was exactly
+    // what made the first start always look dead.
     this.watchdog = setTimeout(() => {
-      if (!this.sawData) {
-        void this.stop();
-        this.setState('error');
-      }
-    }, 5_000);
+      if (!this.sawData) this.setState('error');
+    }, 8_000);
   }
 
   async stop(): Promise<void> {
@@ -278,6 +281,7 @@ export class PolarEcgSource implements IEcgSource {
   }
 
   private setState(state: SensorConnectionState): void {
+    this.currentState = state;
     for (const l of this.stateListeners) l(state);
   }
 }
