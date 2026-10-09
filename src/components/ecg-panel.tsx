@@ -19,6 +19,8 @@ import {
 const WINDOW_SAMPLES = 910;
 /** How often the morphology analysis re-runs over the window. */
 const ANALYZE_MS = 2_000;
+/** Shortest strip a zoom shows (~2 s at 130 Hz) — a couple of beats. */
+const MIN_STRIP_SAMPLES = 260;
 
 interface EcgPanelProps {
   /** Builds the source to stream from (Polar device or mock). */
@@ -103,7 +105,16 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
         </ThemedText>
       </View>
 
-      <EcgStrip samples={samples} gain={gain} height={260} />
+      <EcgStrip
+        samples={samples.slice(
+          -Math.max(
+            MIN_STRIP_SAMPLES,
+            Math.round(WINDOW_SAMPLES / gain),
+          ),
+        )}
+        gain={gain}
+        height={260}
+      />
 
       {report !== null && report.beats > 0 && (
         <View style={styles.statsRow}>

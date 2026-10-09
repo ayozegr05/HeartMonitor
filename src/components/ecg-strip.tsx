@@ -76,7 +76,7 @@ export function EcgStrip({
             styles.column,
             {
               top: c.top,
-              height: Math.max(1, c.bottom - c.top),
+              height: Math.max(2, c.bottom - c.top),
             },
           ]}
         />
