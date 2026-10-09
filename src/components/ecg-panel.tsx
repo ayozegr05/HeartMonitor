@@ -103,7 +103,7 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
         </ThemedText>
       </View>
 
-      <EcgStrip samples={samples} gain={gain} height={170} />
+      <EcgStrip samples={samples} gain={gain} height={260} />
 
       {report !== null && report.beats > 0 && (
         <View style={styles.statsRow}>
@@ -155,7 +155,7 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
       <View style={styles.controlsRow}>
         <Pressable
           style={styles.ctrl}
-          onPress={() => setGain((g) => Math.max(0.25, g / 1.5))}>
+          onPress={() => setGain((g) => Math.max(0.25, g / 2))}>
           <ThemedText type="smallBold">−</ThemedText>
         </Pressable>
         <ThemedText type="small" themeColor="textSecondary">
@@ -163,7 +163,7 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
         </ThemedText>
         <Pressable
           style={styles.ctrl}
-          onPress={() => setGain((g) => Math.min(8, g * 1.5))}>
+          onPress={() => setGain((g) => Math.min(16, g * 2))}>
           <ThemedText type="smallBold">+</ThemedText>
         </Pressable>
         <View style={{ flex: 1 }} />
