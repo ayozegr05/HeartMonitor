@@ -1,3 +1,4 @@
+import { cleanRrIntervals, rmssd } from './hrv';
 import type { AlertEvent, ThresholdProfile } from './models';
 import { activeLowThreshold, isNightTime } from './thresholds';
 
@@ -12,6 +13,11 @@ export interface ReportWindow {
 export interface ReportReading {
   timestamp: number;
   bpm: number;
+  /**
+   * Beat-to-beat intervals when the sensor provides them. DB rows carry
+   * this as a JSON string; both forms are accepted.
+   */
+  rrIntervalsMs?: number[] | string | null;
 }
 
 export interface SessionReport {
@@ -34,6 +40,11 @@ export interface SessionReport {
   pauseCount: number;
   /** Longest dropped-beat interval observed (ms); null if no pauses. */
   longestPauseMs: number | null;
+  /**
+   * RMSSD over the session's RR intervals (ms); null when the sensor
+   * provides no RR data (e.g. the Garmin broadcast).
+   */
+  rmssdMs: number | null;
 }
 
 /**
@@ -95,6 +106,23 @@ export function buildSessionReport(
   const inWindow = events.filter(
     (e) => e.timestamp >= window.startedAt && e.timestamp < windowEnd,
   );
+  const rrs: number[] = [];
+  for (const r of sorted) {
+    let v = r.rrIntervalsMs;
+    if (typeof v === 'string') {
+      try {
+        v = JSON.parse(v) as number[];
+      } catch {
+        v = undefined;
+      }
+    }
+    if (Array.isArray(v)) {
+      for (const rr of v) if (typeof rr === 'number') rrs.push(rr);
+    }
+  }
+  const rmssdMs =
+    rrs.length >= 2 ? Math.round(rmssd(cleanRrIntervals(rrs))) : null;
+
   const pauses = inWindow.filter((e) => e.type === 'pause');
   const longestPauseMs = pauses.reduce<number | null>(
     (acc, e) =>
@@ -120,6 +148,7 @@ export function buildSessionReport(
     bradycardiaCount: inWindow.filter((e) => e.type === 'bradycardia').length,
     pauseCount: pauses.length,
     longestPauseMs,
+    rmssdMs,
   };
 }
 

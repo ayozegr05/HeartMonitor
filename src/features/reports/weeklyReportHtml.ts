@@ -91,6 +91,10 @@ export function weeklyReportHtml(weekly: WeeklyReport): string {
     'Pausa más larga',
     weekly.longestPauseMs !== null ? `${weekly.longestPauseMs} ms` : '—',
   )}
+  ${row(
+    'VFC media (RMSSD)',
+    weekly.avgRmssdMs !== null ? `${weekly.avgRmssdMs} ms` : '—',
+  )}
 </table>
 
 <h2>Detalle por sesión</h2>

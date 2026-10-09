@@ -201,6 +201,7 @@ function ReportCard({ item, thresholds }: { item: SessionWithReport; thresholds:
                 : 'sin tiempo bajo umbral'}
               {' · '}
               {coveragePct}% cobertura
+              {report.rmssdMs !== null && ` · VFC ${report.rmssdMs} ms`}
             </ThemedText>
             <ThemedText
               type="small"
@@ -310,6 +311,7 @@ function WeeklyCard({ weekly }: { weekly: WeeklyReport }) {
           {weekly.timeBelowThresholdMs > 0
             ? `${formatDuration(weekly.timeBelowThresholdMs)} bajo umbral`
             : 'sin tiempo bajo umbral'}
+          {weekly.avgRmssdMs !== null && ` · VFC media ${weekly.avgRmssdMs} ms`}
         </ThemedText>
         <ThemedText
           type="small"

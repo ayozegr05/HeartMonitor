@@ -23,6 +23,7 @@ const report = (
   bradycardiaCount: 0,
   pauseCount: 0,
   longestPauseMs: null,
+  rmssdMs: null,
   ...overrides,
 });
 
@@ -93,6 +94,18 @@ describe('buildWeeklyReport', () => {
     expect(weekly.sessionsCount).toBe(1);
     expect(weekly.perSession[0].durationMs).toBe(2 * DAY);
     expect(weekly.periodStart).toBe(NOW - WEEK_MS);
+  });
+
+  it('averages per-session RMSSD across the week', () => {
+    const weekly = buildWeeklyReport(
+      [
+        report(NOW - DAY, 8 * HOUR, { rmssdMs: 40 }),
+        report(NOW - 2 * DAY, 8 * HOUR, { rmssdMs: 60 }),
+        report(NOW - 3 * DAY, 8 * HOUR), // no RR data
+      ],
+      NOW,
+    );
+    expect(weekly.avgRmssdMs).toBe(50);
   });
 
   it('handles an empty week', () => {
