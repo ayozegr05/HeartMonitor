@@ -410,6 +410,11 @@ export default function MonitorScreen() {
             <EcgPanel
               createSource={makeEcgSource}
               isMock={!(bleDevice && /polar|h10/i.test(bleDevice.label))}
+              liveStatus={
+                streaming
+                  ? `❤️ ${currentReading ? currentReading.bpm : '—'} bpm · monitorizando`
+                  : 'monitor parado'
+              }
               title={
                 bleDevice && /polar|h10/i.test(bleDevice.label)
                   ? `ECG — ${bleDevice.label}`

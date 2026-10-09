@@ -31,6 +31,9 @@ interface EcgPanelProps {
   title: string;
   /** The source is a MockEcgSensor — show the scenario chips. */
   isMock?: boolean;
+  /** Live HR status line — e.g. '62 bpm · monitorizando' — shown under
+      the title so the user sees the session keeps running underneath. */
+  liveStatus?: string;
 }
 
 /**
@@ -38,11 +41,11 @@ interface EcgPanelProps {
  * Entered from Monitor; the sentinel HR session keeps running
  * underneath — this only borrows the strap's second BLE service.
  */
-export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
+export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelProps) {
   const [samples, setSamples] = useState<number[]>([]);
   const [report, setReport] = useState<EcgRhythmReport | null>(null);
   const [flags, setFlags] = useState<string[]>([]);
-  const [state, setState] = useState<string>('connecting');
+  const [state, setState] = useState<string>('idle');
   const [gain, setGain] = useState(1);
   const [scenario, setScenario] = useState<MockEcgScenario>('normal');
   const [savedStrips, setSavedStrips] = useState(0);
@@ -63,7 +66,9 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
       }
     });
     const unsubState = src.onStateChange(setState);
-    src.start().catch(() => setState('error'));
+    // No auto-start: the user launches the stream with the Iniciar button,
+    // like a hospital monitor — the strip appears on demand, and the BLE
+    // link is shared with the HR session via the link lease.
 
     const paint = setInterval(() => {
       setSamples(buf.current.slice(-WINDOW_SAMPLES));
@@ -97,14 +102,53 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
   }, []);
 
   const streaming = state === 'streaming';
+  const busy = state === 'connecting';
 
   return (
     <View style={styles.panel}>
       <View style={styles.headerRow}>
-        <ThemedText type="smallBold">{title}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {streaming ? 'ECG en vivo' : state === 'error' ? 'error' : state}
-        </ThemedText>
+        <View>
+          <ThemedText type="smallBold">{title}</ThemedText>
+          {liveStatus !== undefined && (
+            <ThemedText type="small" themeColor="textSecondary">
+              {liveStatus}
+            </ThemedText>
+          )}
+        </View>
+        <View style={styles.headerRight}>
+          <ThemedText type="small" themeColor="textSecondary">
+            {streaming
+              ? 'ECG en vivo'
+              : state === 'error'
+                ? 'error'
+                : busy
+                  ? 'conectando…'
+                  : 'en pausa'}
+          </ThemedText>
+          <Pressable
+            style={[
+              styles.ctrl,
+              streaming && { backgroundColor: '#B3261E' },
+            ]}
+            disabled={busy}
+            onPress={() => {
+              const src = sourceRef.current;
+              if (!src) return;
+              if (streaming) {
+                void src.stop();
+                setSamples([]);
+                buf.current = [];
+              } else {
+                src.start().catch(() => setState('error'));
+              }
+            }}>
+            <ThemedText
+              type="smallBold"
+              style={streaming ? { color: '#fff' } : undefined}>
+              {streaming ? 'Detener' : 'Iniciar'}
+            </ThemedText>
+          </Pressable>
+        </View>
       </View>
 
       <EcgStrip
@@ -210,6 +254,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
   },
   statsRow: { flexDirection: 'row', gap: Spacing.three },
   flag: { color: '#FFB020' },
