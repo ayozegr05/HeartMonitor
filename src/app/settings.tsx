@@ -8,6 +8,7 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
+    Switch,
     TextInput
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -24,6 +25,7 @@ import {
     pickBackupFolder,
     type BackupEntry
 } from '@/features/backup/deviceBackup';
+import { sendTelegramMessage } from '@/features/caregiver/telegram';
 import { restoreFromHealthConnect } from '@/features/healthconnect/healthConnectRestore';
 import {
     healthConnectStatus,
@@ -361,6 +363,153 @@ function BackupCard() {
   );
 }
 
+/**
+ * Caregiver relay card — Telegram auto-send (free Bot API, straight
+ * from the phone) + WhatsApp one-tap fallback. All config lives on
+ * device in the persisted store; nothing leaves except the alert text.
+ */
+function CaregiverCard() {
+  const theme = useTheme();
+  const {
+    caregiverEnabled,
+    telegramBotToken,
+    telegramChatId,
+    whatsappNumber,
+    pendingWhatsappMessage,
+    setCaregiverEnabled,
+    setCaregiverConfig,
+    clearPendingWhatsapp,
+  } = useMonitorStore();
+
+  const [token, setToken] = useState(telegramBotToken ?? '');
+  const [chatId, setChatId] = useState(telegramChatId ?? '');
+  const [phone, setPhone] = useState(whatsappNumber ?? '');
+  const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testMsg, setTestMsg] = useState<string | null>(null);
+
+  const save = () => {
+    setCaregiverConfig({
+      telegramBotToken: token.trim() || null,
+      telegramChatId: chatId.trim() || null,
+      whatsappNumber: phone.trim() || null,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const test = async () => {
+    setTesting(true);
+    setTestMsg(null);
+    const res = await sendTelegramMessage(
+      token.trim() || null,
+      chatId.trim() || null,
+      '✅ Mensaje de prueba — HeartMonitor funciona',
+    );
+    setTestMsg(res.ok ? 'Enviado ✓ — revísalo en Telegram' : `Falló: ${res.error}`);
+    setTesting(false);
+  };
+
+  const field = (
+    label: string,
+    value: string,
+    setter: (v: string) => void,
+    hint: string,
+    secure?: boolean,
+  ) => (
+    <ThemedView style={styles.inputRow}>
+      <ThemedView style={styles.inputLabel}>
+        <ThemedText type="smallBold">{label}</ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {hint}
+        </ThemedText>
+      </ThemedView>
+      <TextInput
+        value={value}
+        onChangeText={setter}
+        autoCapitalize="none"
+        autoCorrect={false}
+        secureTextEntry={secure}
+        style={[
+          styles.inputWide,
+          { color: theme.text, borderColor: theme.backgroundSelected },
+        ]}
+      />
+    </ThemedView>
+  );
+
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.switchRow}>
+        <ThemedText type="smallBold">📣 Avisar a cuidador</ThemedText>
+        <Switch
+          value={caregiverEnabled}
+          onValueChange={setCaregiverEnabled}
+        />
+      </ThemedView>
+      <ThemedText type="small" themeColor="textSecondary">
+        {caregiverEnabled
+          ? 'Activo: las alertas salen por Telegram solas; WhatsApp queda a un toque'
+          : 'Apagado: las alertas solo se muestran en este móvil'}
+      </ThemedText>
+
+      {field(
+        'Token del bot de Telegram',
+        token,
+        setToken,
+        'Habla con @BotFather → /newbot → te da el token',
+        true,
+      )}
+      {field(
+        'Chat ID',
+        chatId,
+        setChatId,
+        'Escribe /start a tu bot y luego a @userinfobot para ver tu id',
+      )}
+      {field(
+        'WhatsApp del cuidador',
+        phone,
+        setPhone,
+        'Con prefijo internacional, ej: 34600112233',
+      )}
+
+      <Pressable
+        onPress={save}
+        style={[styles.button, { backgroundColor: '#2E7D32' }]}>
+        <ThemedText type="smallBold" style={styles.buttonText}>
+          {saved ? 'Guardado ✓' : 'Guardar cuidador'}
+        </ThemedText>
+      </Pressable>
+      <Pressable
+        onPress={() => void test()}
+        disabled={testing}
+        style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+        <ThemedText type="smallBold">
+          {testing ? 'Enviando…' : 'Enviar mensaje de prueba'}
+        </ThemedText>
+      </Pressable>
+      {testMsg !== null && (
+        <ThemedText type="small" themeColor="textSecondary">
+          {testMsg}
+        </ThemedText>
+      )}
+      {pendingWhatsappMessage !== null && (
+        <Pressable onPress={clearPendingWhatsapp}>
+          <ThemedText type="small" themeColor="textSecondary">
+            Aviso de WhatsApp pendiente — toca para descartarlo
+          </ThemedText>
+        </Pressable>
+      )}
+      <ThemedText type="small" themeColor="textSecondary">
+        Telegram avisa solo (bradicardia, pausas, caídas del reloj y el
+        informe de las 7:00). WhatsApp no tiene API gratuita: cuando haya
+        un evento verás el botón «Avisar por WhatsApp» en Monitor — un
+        toque y va pre-escrito.
+      </ThemedText>
+    </ThemedView>
+  );
+}
+
 export default function SettingsScreen() {
   const theme = useTheme();
   const { thresholds, setThresholds } = useMonitorStore();
@@ -451,6 +600,8 @@ export default function SettingsScreen() {
             </Pressable>
           </ThemedView>
 
+          <CaregiverCard />
+
           {Platform.OS === 'android' && <HealthConnectCard />}
 
           {Platform.OS === 'android' && <BackupCard />}
@@ -527,6 +678,19 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     fontSize: 18,
     textAlign: 'center',
+  },
+  inputWide: {
+    width: 170,
+    borderWidth: 1,
+    borderRadius: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    fontSize: 15,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   button: {
     borderRadius: Spacing.three,
