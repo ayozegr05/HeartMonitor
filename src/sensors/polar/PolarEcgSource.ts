@@ -59,6 +59,19 @@ export class PolarEcgSource implements IEcgSource {
   private device: Device | null = null;
   private sawData = false;
   private watchdog: ReturnType<typeof setTimeout> | null = null;
+  private mtu = 0;
+  private ackStatus: string = '—';
+  private framesRx = 0;
+  private samplesRx = 0;
+
+  getDebugInfo(): Record<string, string | number> {
+    return {
+      mtu: this.mtu,
+      ack: this.ackStatus,
+      frames: this.framesRx,
+      muestras: this.samplesRx,
+    };
+  }
 
   /**
    * @param device the connected strap, or a resolver returning one
@@ -85,6 +98,10 @@ export class PolarEcgSource implements IEcgSource {
 
   async start(): Promise<void> {
     this.setState('connecting');
+    this.sawData = false;
+    this.framesRx = 0;
+    this.samplesRx = 0;
+    this.ackStatus = '—';
     const dev =
       this.device ?? (await this.resolveDevice?.());
     if (!dev) throw new Error('No Polar device');
@@ -95,7 +112,8 @@ export class PolarEcgSource implements IEcgSource {
     // MTU is too small — Android defaults to 23 bytes, so ask for the
     // maximum. iOS negotiates this itself; requestMTU throws there.
     try {
-      await dev.requestMTU(512);
+      const d = await dev.requestMTU(512);
+      this.mtu = d.mtu;
     } catch {
       // platform handles MTU — fine
     }
@@ -117,6 +135,10 @@ export class PolarEcgSource implements IEcgSource {
               r.measurementType === MEASUREMENT_TYPE.ECG &&
               ackResolve
             ) {
+              this.ackStatus =
+                r.status === CONTROL_STATUS.SUCCESS
+                  ? 'ok'
+                  : `err ${r.status}`;
               ackResolve(r.status);
               ackResolve = null;
             }
@@ -137,6 +159,8 @@ export class PolarEcgSource implements IEcgSource {
             const f = parsePmdData(base64ToBytes(c.value));
             if (f.measurementType !== MEASUREMENT_TYPE.ECG) return;
             this.sawData = true;
+            this.framesRx += 1;
+            this.samplesRx += f.samples.length;
             const frame: EcgFrame = {
               samples: f.samples,
               sampleRateHz: ECG_SAMPLE_RATE_HZ,
@@ -161,7 +185,10 @@ export class PolarEcgSource implements IEcgSource {
     const status = await Promise.race([
       ack,
       new Promise<number>((r) =>
-        setTimeout(() => r(CONTROL_STATUS.SUCCESS), 3_000),
+        setTimeout(() => {
+          if (this.ackStatus === '—') this.ackStatus = 'timeout';
+          r(CONTROL_STATUS.SUCCESS);
+        }, 3_000),
       ),
     ]);
     if (status !== CONTROL_STATUS.SUCCESS) {
