@@ -15,8 +15,10 @@ import {
   MockEcgSensor,
   type MockEcgScenario,
 } from '@/sensors/polar/MockEcgSensor';
-/** Rolling window length (~7 s at the H10's fixed 130 Hz). */
+/** Rolling window the analyser sees (~7 s at the H10's fixed 130 Hz). */
 const WINDOW_SAMPLES = 910;
+/** Strip length at gain 1 (~4 s — 3-4 beats at ~65 bpm). */
+const STRIP_SAMPLES = 520;
 /** How often the morphology analysis re-runs over the window. */
 const ANALYZE_MS = 2_000;
 /** Shortest strip a zoom shows (~2 s at 130 Hz) — a couple of beats. */
@@ -107,10 +109,7 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
 
       <EcgStrip
         samples={samples.slice(
-          -Math.max(
-            MIN_STRIP_SAMPLES,
-            Math.round(WINDOW_SAMPLES / gain),
-          ),
+          -Math.max(MIN_STRIP_SAMPLES, Math.round(STRIP_SAMPLES / gain)),
         )}
         gain={gain}
         height={260}
