@@ -7,6 +7,10 @@ export interface CapturedStrip {
   sampleRateHz: number;
   samples: number[];
   report: EcgRhythmReport;
+  /** Classification label for auto-captured strips (e.g. 'pausa sinusal'). */
+  label?: string;
+  /** True when the background service grabbed it on an event. */
+  auto?: boolean;
 }
 
 /**

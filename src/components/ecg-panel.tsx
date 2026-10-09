@@ -8,7 +8,14 @@ import {
   analyzeEcgStrip,
   type EcgRhythmReport,
 } from '@/domain/ecgAnalysis';
+import { removeBaselineWander } from '@/domain/ecgFilter';
+import {
+  ECG_AUTO_MODE_LABELS,
+  ecgAutoService,
+  type EcgAutoMode,
+} from '@/features/ecg/ecgAutoService';
 import { saveStrip } from '@/features/ecg/stripStore';
+import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import type { IEcgSource } from '@/sensors/ecg';
 import {
   MOCK_ECG_SCENARIO_LABELS,
@@ -49,14 +56,29 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
   const [gain, setGain] = useState(1);
   const [scenario, setScenario] = useState<MockEcgScenario>('normal');
   const [savedStrips, setSavedStrips] = useState(0);
+  const [filtered, setFiltered] = useState(false);
+  const ecgAutoMode = useMonitorStore((s) => s.ecgAutoMode);
+  const setEcgAutoMode = useMonitorStore((s) => s.setEcgAutoMode);
   const buf = useRef<number[]>([]);
   const sourceRef = useRef<IEcgSource | null>(null);
+  /** True when the panel rides the auto-service stream (don't stop it
+   *  on unmount — the background capture keeps it alive). */
+  const borrowed = useRef(false);
   // Flags latch: a pattern seen once stays visible while the window
   // slides past it (e.g. a dropped beat only sits in-frame briefly).
   const flagsSeen = useRef<Set<string>>(new Set());
+  const filteredRef = useRef(filtered);
+  useEffect(() => {
+    filteredRef.current = filtered;
+  }, [filtered]);
 
   useEffect(() => {
-    const src = createSource();
+    // If the background auto-service already streams this strap, borrow
+    // its source — a second START on the PMD control point would just
+    // be rejected by the strap.
+    const shared = ecgAutoService.borrowedSource();
+    borrowed.current = shared !== null;
+    const src = shared ?? createSource();
     sourceRef.current = src;
     const unsubFrames = src.subscribe((frame) => {
       const b = buf.current;
@@ -76,7 +98,10 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
     const analyze = setInterval(() => {
       const w = buf.current.slice(-WINDOW_SAMPLES);
       if (w.length >= 130) {
-        const r = analyzeEcgStrip(w, 130);
+        const r = analyzeEcgStrip(
+          filteredRef.current ? removeBaselineWander(w, 130) : w,
+          130,
+        );
         setReport(r);
         const seen = flagsSeen.current;
         let changed = false;
@@ -95,7 +120,7 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
       clearInterval(analyze);
       unsubFrames();
       unsubState();
-      void src.stop();
+      if (!borrowed.current) void src.stop();
       sourceRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -103,6 +128,12 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
 
   const streaming = state === 'streaming';
   const busy = state === 'connecting';
+  // Optional baseline-wander filter — the "hospital-flat" view. The
+  // same filtered input feeds the analyser, since breathing drift is
+  // noise for P/QRS work too.
+  const viewSamples = filtered
+    ? removeBaselineWander(samples, 130)
+    : samples;
 
   return (
     <View style={styles.panel}>
@@ -129,7 +160,7 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
       </View>
 
       <EcgStrip
-        samples={samples.slice(
+        samples={viewSamples.slice(
           -Math.max(MIN_STRIP_SAMPLES, Math.round(STRIP_SAMPLES / gain)),
         )}
         gain={gain}
@@ -158,6 +189,51 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
       {/* On-device diagnostics — invaluable when debugging a real strap
           where no debugger is attached. */}
       <DebugLine sourceRef={sourceRef} />
+
+      {/* Background ECG mode: night / 24 h auto-stream with classified
+          strip auto-capture on every event. Off by default — it costs
+          strap battery. */}
+      {!isMock && (
+        <View style={styles.chipRow}>
+          <ThemedText type="small" themeColor="textSecondary">
+            ECG auto:
+          </ThemedText>
+          {(Object.keys(ECG_AUTO_MODE_LABELS) as EcgAutoMode[]).map((m) => (
+            <Pressable
+              key={m}
+              onPress={() => setEcgAutoMode(m)}
+              style={[styles.chip, ecgAutoMode === m && styles.chipSelected]}>
+              <ThemedText
+                type="small"
+                style={ecgAutoMode === m ? styles.chipSelectedText : undefined}>
+                {ECG_AUTO_MODE_LABELS[m]}
+              </ThemedText>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {/* Raw vs baseline-filtered view */}
+      <View style={styles.chipRow}>
+        <Pressable
+          onPress={() => setFiltered(false)}
+          style={[styles.chip, !filtered && styles.chipSelected]}>
+          <ThemedText
+            type="small"
+            style={!filtered ? styles.chipSelectedText : undefined}>
+            cruda
+          </ThemedText>
+        </Pressable>
+        <Pressable
+          onPress={() => setFiltered(true)}
+          style={[styles.chip, filtered && styles.chipSelected]}>
+          <ThemedText
+            type="small"
+            style={filtered ? styles.chipSelectedText : undefined}>
+            filtrada (sin deriva)
+          </ThemedText>
+        </Pressable>
+      </View>
 
       {isMock && (
         <View style={styles.chipRow}>
@@ -199,7 +275,13 @@ export function EcgPanel({ createSource, title, isMock, liveStatus }: EcgPanelPr
           const src = sourceRef.current;
           if (!src) return;
           if (streaming) {
-            void src.stop();
+            if (borrowed.current) {
+              // Shared auto stream — pause the auto mode instead of
+              // killing the link out from under the recorder.
+              ecgAutoService.pauseAutoFor(30 * 60_000);
+            } else {
+              void src.stop();
+            }
             setSamples([]);
             buf.current = [];
           } else {

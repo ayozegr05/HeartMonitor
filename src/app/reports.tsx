@@ -21,6 +21,12 @@ import {
     type WeeklyReport,
 } from '@/domain/weeklyReport';
 import { shareStripCsv, shareStripPdf } from '@/features/ecg/exportStrip';
+import {
+  listEcgSessions,
+  removeEcgSession,
+  shareEcgSessionCsv,
+  type EcgSessionInfo,
+} from '@/features/ecg/ecgSessionRecorder';
 import { loadStrips, removeStrip, type CapturedStrip } from '@/features/ecg/stripStore';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { shareWeeklyPdf } from '@/features/reports/exportWeeklyPdf';
@@ -379,9 +385,17 @@ function StripsCard({
               styles.stripRow,
               { backgroundColor: theme.background, opacity: pressed ? 0.7 : 1 },
             ]}>
-            <ThemedText type="smallBold">
-              {when} · {s.report.meanBpm} bpm
-            </ThemedText>
+            <View style={{ flex: 1 }}>
+              <ThemedText type="smallBold">
+                {when} · {s.report.meanBpm} bpm
+                {s.auto ? ' · auto' : ''}
+              </ThemedText>
+              {s.label !== undefined && (
+                <ThemedText type="small" themeColor="textSecondary">
+                  {s.label}
+                </ThemedText>
+              )}
+            </View>
             <ThemedText
               type="small"
               themeColor="textSecondary"
@@ -400,6 +414,59 @@ function StripsCard({
   );
 }
 
+function SessionsCard({
+  sessions,
+  onExport,
+  onDelete,
+}: {
+  sessions: EcgSessionInfo[];
+  onExport: (s: EcgSessionInfo) => void;
+  onDelete: (s: EcgSessionInfo) => void;
+}) {
+  const theme = useTheme();
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          Sesiones ECG grabadas
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          stream completo · toca para exportar CSV entero
+        </ThemedText>
+      </ThemedView>
+      {sessions.map((s) => {
+        const when = new Date(s.startedAt).toLocaleString(undefined, {
+          day: 'numeric',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        const mins = Math.round(s.samples / s.sampleRateHz / 60);
+        return (
+          <Pressable
+            key={s.startedAt}
+            onPress={() => onExport(s)}
+            onLongPress={() => onDelete(s)}
+            style={({ pressed }) => [
+              styles.stripRow,
+              { backgroundColor: theme.background, opacity: pressed ? 0.7 : 1 },
+            ]}>
+            <ThemedText type="smallBold" style={{ flex: 1 }}>
+              {when}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {mins} min · {s.samples.toLocaleString('es-ES')} muestras
+            </ThemedText>
+          </Pressable>
+        );
+      })}
+      <ThemedText type="small" themeColor="textSecondary">
+        Mantén pulsada una sesión para borrarla.
+      </ThemedText>
+    </ThemedView>
+  );
+}
+
 export default function ReportsScreen() {
   const theme = useTheme();
   const thresholds = useMonitorStore((s) => s.thresholds);
@@ -407,6 +474,7 @@ export default function ReportsScreen() {
   const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
   const [onlyWithEvents, setOnlyWithEvents] = useState(false);
   const [strips, setStrips] = useState<CapturedStrip[]>([]);
+  const [sessions, setSessions] = useState<EcgSessionInfo[]>([]);
   const [activeStrip, setActiveStrip] = useState<CapturedStrip | null>(null);
   const hasAnyEvents = items.some((i) => i.report.eventCount > 0);
 
@@ -429,6 +497,9 @@ export default function ReportsScreen() {
       loadStrips()
         .then((loaded) => setStrips([...loaded]))
         .catch(() => setStrips([]));
+      listEcgSessions()
+        .then(setSessions)
+        .catch(() => setSessions([]));
     }, [thresholds]),
   );
 
@@ -459,6 +530,25 @@ export default function ReportsScreen() {
             <>
               {weekly && weekly.sessionsCount > 0 && !onlyWithEvents && (
                 <WeeklyCard weekly={weekly} />
+              )}
+              {sessions.length > 0 && !onlyWithEvents && (
+                <SessionsCard
+                  sessions={sessions}
+                  onExport={(s) => {
+                    shareEcgSessionCsv(s).catch((e) =>
+                      Alert.alert(
+                        'No se pudo exportar',
+                        e instanceof Error ? e.message : 'Error desconocido',
+                      ),
+                    );
+                  }}
+                  onDelete={(s) => {
+                    removeEcgSession(s.startedAt);
+                    setSessions((prev) =>
+                      prev.filter((x) => x.startedAt !== s.startedAt),
+                    );
+                  }}
+                />
               )}
               {strips.length > 0 && !onlyWithEvents && (
                 <StripsCard
@@ -510,6 +600,8 @@ export default function ReportsScreen() {
                       minute: '2-digit',
                     })}
                     {' · '}
+                    {activeStrip.label !== undefined &&
+                      `${activeStrip.label} · `}
                     {activeStrip.report.meanBpm} bpm · QRS{' '}
                     {Math.round(activeStrip.report.meanQrsWidthMs)} ms
                     {activeStrip.report.meanPrMs !== undefined &&

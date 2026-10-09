@@ -375,3 +375,128 @@ function detectRPeaksDetailed(
   }
   return { peaks, centered, env };
 }
+
+/**
+ * What the gap in a captured strip most plausibly is — the label a
+ * saved strip carries so "Pausa detectada · 2 512 ms" becomes
+ * "pausa compensatoria", "pausa sinusal" or "extrasístole" at a glance.
+ * Observational wording, same rule as the flags.
+ */
+export type PauseKind = 'blocked' | 'sinus' | 'premature' | 'none';
+
+export interface PauseClassification {
+  kind: PauseKind;
+  /** User-facing observational label (Spanish). */
+  label: string;
+  /** The RR gap found (ms); 0 when kind is 'none'. */
+  gapMs: number;
+}
+
+/**
+ * Classifies the dominant pause inside a strip around a detected
+ * event: looks for the longest RR gap ≥ 1.6× the median, then reads
+ * its morphology:
+ *   - lone P bump inside the gap → non-conducted beat (compensatory)
+ *   - premature + wide QRS right before the gap → extrasystole
+ *   - otherwise flat gap → sinus pause
+ */
+export function classifyPauseEvent(
+  samples: number[],
+  sampleRateHz = 130,
+): PauseClassification {
+  if (samples.length < sampleRateHz) {
+    return { kind: 'none', label: 'ventana demasiado corta', gapMs: 0 };
+  }
+  const { peaks, centered, env } = detectRPeaksDetailed(
+    samples,
+    sampleRateHz,
+  );
+  if (peaks.length < 3) {
+    return { kind: 'none', label: 'sin latidos suficientes', gapMs: 0 };
+  }
+
+  const sm = movingAverage(centered, 1);
+  const diffs: number[] = [];
+  for (let i = 1; i < sm.length; i++) {
+    diffs.push(Math.abs(sm[i] - sm[i - 1]));
+  }
+  diffs.sort((a, b) => a - b);
+  const jitter = diffs.length ? diffs[Math.floor(diffs.length / 2)] : 0;
+
+  const rrs: number[] = [];
+  for (let k = 1; k < peaks.length; k++) {
+    rrs.push(((peaks[k] - peaks[k - 1]) / sampleRateHz) * 1000);
+  }
+  const sortedRrs = [...rrs].sort((a, b) => a - b);
+  const medianRr = sortedRrs[Math.floor(sortedRrs.length / 2)];
+
+  let gapBeat = -1; // index into `peaks` of the beat AFTER the gap
+  let gapMs = 0;
+  for (let k = 1; k < peaks.length; k++) {
+    const rr = rrs[k - 1];
+    if (rr >= medianRr * 1.6 && rr > gapMs) {
+      gapMs = rr;
+      gapBeat = k;
+    }
+  }
+  if (gapBeat < 0) {
+    return { kind: 'none', label: 'sin pausa clara en la ventana', gapMs: 0 };
+  }
+
+  const medianSamples = (medianRr / 1000) * sampleRateHz;
+
+  // A very wide QRS (a PVC's slope is slow) can fall UNDER the energy
+  // threshold and never get detected as a beat — its own body then
+  // sits inside the gap looking like a bump. An R is ~10× a P's
+  // amplitude, so check the gap for a large excursion first.
+  const rAmps = peaks.map((r) => Math.abs(centered[r]));
+  rAmps.sort((a2, b2) => a2 - b2);
+  const medianRAmp = rAmps[Math.floor(rAmps.length / 2)];
+  const gA = peaks[gapBeat - 1] + Math.round(medianSamples * 0.3);
+  const gB = peaks[gapBeat] - Math.round(medianSamples * 0.1);
+  let gapMaxAbs = 0;
+  for (let i = Math.max(0, gA); i < Math.min(centered.length, gB); i++) {
+    gapMaxAbs = Math.max(gapMaxAbs, Math.abs(centered[i]));
+  }
+  if (medianRAmp > 0 && gapMaxAbs > medianRAmp * 0.45) {
+    return {
+      kind: 'premature',
+      label: 'extrasístole — latido ancho dentro del hueco seguido de pausa compensatoria',
+      gapMs: Math.round(gapMs),
+    };
+  }
+
+  // Lone P inside the gap → a beat was initiated but not conducted.
+  // The floor is max(jitter, ~2 µV): on a dead-quiet strip the tail
+  // of a Gaussian never reaches exactly zero, and any epsilon bump
+  // would fake a conducted-looking P.
+  const a = peaks[gapBeat - 1] + Math.round(medianSamples * 0.55);
+  const b = peaks[gapBeat] + Math.round((P_WINDOW[0] / 1000) * sampleRateHz) - 2;
+  if (findBump(sm, a, b, Math.max(jitter, 2)) >= 0) {
+    return {
+      kind: 'blocked',
+      label: 'pausa compensatoria — onda P sin latido tras ella (latido bloqueado)',
+      gapMs: Math.round(gapMs),
+    };
+  }
+
+  // Premature, wide QRS just before the gap → extrasystole followed by
+  // its compensatory pause.
+  // RR ending AT the beat before the gap (rrs[k-1] is the interval
+  // peaks[k-1]→peaks[k], so rrs[gapBeat-1] IS the gap itself).
+  const prevRr = gapBeat >= 2 ? rrs[gapBeat - 2] : Infinity;
+  const prevWidth = qrsWidthMs(centered, env, peaks[gapBeat - 1], sampleRateHz);
+  if (prevRr < medianRr * 0.8 && prevWidth >= 120) {
+    return {
+      kind: 'premature',
+      label: 'extrasístole — latido prematuro y ancho seguido de pausa compensatoria',
+      gapMs: Math.round(gapMs),
+    };
+  }
+
+  return {
+    kind: 'sinus',
+    label: 'pausa sinusal — hueco sin onda P (frecuente dormido)',
+    gapMs: Math.round(gapMs),
+  };
+}

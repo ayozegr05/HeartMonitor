@@ -28,6 +28,10 @@ import {
     isNightTime,
     SLEEP_END_HOUR,
 } from '@/domain/thresholds';
+import {
+    ecgAutoService,
+    type EcgAutoMode,
+} from '@/features/ecg/ecgAutoService';
 import { syncReadingsToHealthConnect } from '@/features/healthconnect/healthConnectSync';
 import {
     startMonitoringService,
@@ -89,6 +93,13 @@ interface MonitorState {
   backupFolderUri: string | null;
   /** The one-time "protect your history" nag has been acknowledged. */
   backupNagDismissed: boolean;
+  /**
+   * Background ECG mode: 'off' (default — HR only), 'night' (stream
+   * runs during the sleep window), 'always' (24 h). When active the
+   * strap streams ECG in the background: events auto-capture a
+   * classified 30 s strip and the session records to disk.
+   */
+  ecgAutoMode: EcgAutoMode;
 
   startMock: (scenario: MockScenario) => Promise<void>;
   startBle: (deviceId: string) => Promise<void>;
@@ -102,6 +113,7 @@ interface MonitorState {
   setLastBackupExportAt: (ts: number) => void;
   setBackupNagDismissed: () => void;
   setBackupFolderUri: (uri: string | null) => void;
+  setEcgAutoMode: (mode: EcgAutoMode) => void;
   /**
    * Called once at app start. If a BLE session was live when the app last
    * died (crash, process reclaim), resume it — the user intent was explicit.
@@ -182,6 +194,11 @@ export const useMonitorStore = create<MonitorState>()(
 
         // Side effects — persisted + alerted, never blocking the stream.
         void saveReading(reading, label, get().sessionId).catch(console.warn);
+        if (detected.length > 0) {
+          // Background ECG: auto-capture + classify a strip around
+          // each event when an auto mode is streaming.
+          ecgAutoService.onEvents(detected);
+        }
         for (const event of detected) {
           void saveEvent(event, get().sessionId).catch(console.warn);
           const body =
@@ -297,6 +314,11 @@ export const useMonitorStore = create<MonitorState>()(
           bleDevice: { id: deviceId, label: next.label },
           reconnectAttempt: 0,
         });
+        // Background ECG: only Polar straps expose the PMD stream; the
+        // service no-ops for anything else and for mode 'off'.
+        if (/polar|h10/i.test(next.label)) {
+          ecgAutoService.attach(deviceId, next.label, get().ecgAutoMode);
+        }
       };
 
       const attemptReconnect = async (): Promise<void> => {
@@ -435,6 +457,7 @@ export const useMonitorStore = create<MonitorState>()(
         sessionStartedAt: null,
         lastReportedAt: null,
         healthConnectEnabled: false,
+        ecgAutoMode: 'off',
         lastHcSyncAt: null,
         lastBackupExportAt: null,
         backupFolderUri: null,
@@ -568,6 +591,7 @@ export const useMonitorStore = create<MonitorState>()(
             void endSession(sessionId, Date.now()).catch(console.warn);
           }
           await detachSensor();
+          ecgAutoService.detach();
           void stopMonitoringService().catch(() => {});
           set({
             connectionState: 'idle',
@@ -583,6 +607,11 @@ export const useMonitorStore = create<MonitorState>()(
         },
 
         setThresholds: (t) => set({ thresholds: t }),
+
+        setEcgAutoMode: (mode) => {
+          set({ ecgAutoMode: mode });
+          ecgAutoService.setMode(mode);
+        },
 
         setHealthConnectEnabled: (enabled) => {
           set({ healthConnectEnabled: enabled });
@@ -621,6 +650,7 @@ export const useMonitorStore = create<MonitorState>()(
         lastBackupExportAt: s.lastBackupExportAt,
         backupFolderUri: s.backupFolderUri,
         backupNagDismissed: s.backupNagDismissed,
+        ecgAutoMode: s.ecgAutoMode,
       }),
     },
   ),
