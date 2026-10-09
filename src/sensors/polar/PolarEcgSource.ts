@@ -63,14 +63,23 @@ export class PolarEcgSource implements IEcgSource {
   private ackStatus: string = '—';
   private framesRx = 0;
   private samplesRx = 0;
+  private lastError = '';
+  private lastFrameAt = 0;
 
   getDebugInfo(): Record<string, string | number> {
-    return {
+    const silence =
+      this.lastFrameAt > 0
+        ? Math.round((Date.now() - this.lastFrameAt) / 1000)
+        : -1;
+    const info: Record<string, string | number> = {
       mtu: this.mtu,
       ack: this.ackStatus,
       frames: this.framesRx,
       muestras: this.samplesRx,
+      silencio: silence >= 0 ? `${silence}s` : '—',
     };
+    if (this.lastError) info.err = this.lastError;
+    return info;
   }
 
   /**
@@ -117,6 +126,14 @@ export class PolarEcgSource implements IEcgSource {
     } catch {
       // platform handles MTU — fine
     }
+    // A 130 Hz waveform needs the lowest connection interval Android
+    // gives — low-priority connections are where notification streams
+    // silently stall on real devices.
+    try {
+      await dev.requestConnectionPriority(1); // HIGH
+    } catch {
+      // not supported everywhere — non-fatal
+    }
     await dev.discoverAllServicesAndCharacteristics();
 
     // Ack waiter: the control point echoes the op with a status byte.
@@ -127,7 +144,11 @@ export class PolarEcgSource implements IEcgSource {
         PMD_SERVICE_UUID,
         PMD_CONTROL_POINT_UUID,
         (error, c) => {
-          if (error || !c?.value) return;
+          if (error) {
+            this.lastError = `cp ${error.errorCode ?? error.message}`;
+            return;
+          }
+          if (!c?.value) return;
           try {
             const r = parseControlResponse(base64ToBytes(c.value));
             if (
@@ -154,11 +175,16 @@ export class PolarEcgSource implements IEcgSource {
         PMD_SERVICE_UUID,
         PMD_DATA_UUID,
         (error, c) => {
-          if (error || !c?.value) return;
+          if (error) {
+            this.lastError = `data ${error.errorCode ?? error.message}`;
+            return;
+          }
+          if (!c?.value) return;
           try {
             const f = parsePmdData(base64ToBytes(c.value));
             if (f.measurementType !== MEASUREMENT_TYPE.ECG) return;
             this.sawData = true;
+            this.lastFrameAt = Date.now();
             this.framesRx += 1;
             this.samplesRx += f.samples.length;
             const frame: EcgFrame = {
