@@ -10,6 +10,9 @@ export const MOCK_ECG_SCENARIO_LABELS: Record<EcgScenario, string> = {
   noP: 'Sin onda P (ritmo junctional)',
   wideQrs: 'QRS ancho (~160 ms)',
   irregular: 'Ritmo irregular',
+  avBlock1: 'PR largo (~240 ms)',
+  wenckebach: 'Wenckebach (PR crece + caída)',
+  mobitz2: 'Mobitz II (PR fijo + caída)',
 };
 
 const SAMPLE_RATE = 130;

@@ -97,6 +97,10 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
           <ThemedText type="small" themeColor="textSecondary">
             {report.meanBpm} bpm · QRS {Math.round(report.meanQrsWidthMs)} ms
             · P {Math.round((1 - report.pMissingFraction) * 100)}%
+            {report.meanPrMs !== undefined ? ` · PR ${report.meanPrMs} ms` : ''}
+            {report.droppedBeats > 0
+              ? ` · ${report.droppedBeats} bloqueado${report.droppedBeats === 1 ? '' : 's'}`
+              : ''}
           </ThemedText>
         </View>
       )}

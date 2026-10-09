@@ -1,7 +1,7 @@
 import { analyzeEcgStrip } from '@/domain/ecgAnalysis';
-import { makeEcgWaveform } from '@/domain/ecgWaveform';
+import { makeEcgWaveform, type EcgScenario } from '@/domain/ecgWaveform';
 
-function strip(scenario: 'normal' | 'noP' | 'wideQrs' | 'irregular', secs = 10) {
+function strip(scenario: EcgScenario, secs = 10) {
   const f = makeEcgWaveform({ scenario, noise: () => 0.5 });
   const n = Math.round(130 * secs);
   const samples: number[] = [];
@@ -41,6 +41,32 @@ describe('analyzeEcgStrip', () => {
     expect(r.pMissingFraction).toBeLessThan(0.5);
     expect(r.meanQrsWidthMs).toBeLessThan(120);
     expect(r.rrIrregularity).toBeLessThan(0.15);
+  });
+
+  it('measures PR and flags first-degree block when it exceeds 200 ms', () => {
+    const r = analyzeEcgStrip(strip('avBlock1'));
+    expect(r.meanPrMs).toBeGreaterThan(200);
+    expect(r.droppedBeats).toBe(0);
+    expect(r.flags.join(' ')).toContain('1er grado');
+  });
+
+  it('flags Wenckebach: progressive PR before a blocked beat', () => {
+    const r = analyzeEcgStrip(strip('wenckebach'));
+    expect(r.droppedBeats).toBeGreaterThanOrEqual(1);
+    expect(r.flags.join(' ')).toContain('Mobitz I');
+  });
+
+  it('flags Mobitz II: constant PR before a blocked beat', () => {
+    const r = analyzeEcgStrip(strip('mobitz2'));
+    expect(r.droppedBeats).toBeGreaterThanOrEqual(1);
+    expect(r.flags.join(' ')).toContain('Mobitz II');
+  });
+
+  it('sees a normal PR on a normal strip', () => {
+    const r = analyzeEcgStrip(strip('normal'));
+    expect(r.droppedBeats).toBe(0);
+    expect(r.meanPrMs).toBeGreaterThan(80);
+    expect(r.meanPrMs).toBeLessThan(220);
   });
 
   it('returns an empty report on too-short input', () => {
