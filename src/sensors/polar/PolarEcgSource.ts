@@ -65,6 +65,8 @@ export class PolarEcgSource implements IEcgSource {
   private samplesRx = 0;
   private lastError = '';
   private lastFrameAt = 0;
+  private framesBad = 0;
+  private lastHex = '';
 
   getDebugInfo(): Record<string, string | number> {
     const silence =
@@ -79,6 +81,8 @@ export class PolarEcgSource implements IEcgSource {
       silencio: silence >= 0 ? `${silence}s` : '—',
     };
     if (this.lastError) info.err = this.lastError;
+    if (this.framesBad > 0) info.parseErr = this.framesBad;
+    if (this.lastHex) info.hex = this.lastHex;
     return info;
   }
 
@@ -180,8 +184,14 @@ export class PolarEcgSource implements IEcgSource {
             return;
           }
           if (!c?.value) return;
+          const raw = base64ToBytes(c.value);
+          // First 10 bytes as hex — identifies the frame type/version
+          // the firmware actually sends without a debugger attached.
+          this.lastHex = Array.from(raw.subarray(0, 10))
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('');
           try {
-            const f = parsePmdData(base64ToBytes(c.value));
+            const f = parsePmdData(raw);
             if (f.measurementType !== MEASUREMENT_TYPE.ECG) return;
             this.sawData = true;
             this.lastFrameAt = Date.now();
@@ -193,8 +203,9 @@ export class PolarEcgSource implements IEcgSource {
               timestamp: Date.now(),
             };
             for (const l of this.listeners) l(frame);
-          } catch {
-            // malformed frame — drop, keep streaming
+          } catch (e) {
+            this.framesBad += 1;
+            this.lastError = `parse ${String(e).slice(0, 40)}`;
           }
         },
       ),
