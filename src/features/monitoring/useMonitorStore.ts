@@ -18,6 +18,11 @@ import {
     type ThresholdProfile,
 } from '@/domain/models';
 import {
+    buildEventMessage,
+    buildMorningMessage,
+    buildOutageMessage,
+} from '@/domain/caregiverMessage';
+import {
     buildSessionReport,
     formatReportSummary,
 } from '@/domain/morningReport';
@@ -33,6 +38,7 @@ import {
     startMonitoringService,
     stopMonitoringService,
 } from '@/features/monitoring/foregroundService';
+import { sendTelegramMessage } from '@/features/caregiver/telegram';
 import { BleHeartRateSensor } from '@/sensors/BleHeartRateSensor';
 import { getBleManager } from '@/sensors/bleManager';
 import {
@@ -89,6 +95,16 @@ interface MonitorState {
   backupFolderUri: string | null;
   /** The one-time "protect your history" nag has been acknowledged. */
   backupNagDismissed: boolean;
+  /** Caregiver relay: master switch + channel config, all persisted. */
+  caregiverEnabled: boolean;
+  /** Telegram Bot API token (from @BotFather). */
+  telegramBotToken: string | null;
+  /** Telegram chat_id the bot writes to. */
+  telegramChatId: string | null;
+  /** Caregiver WhatsApp number (intl format, digits) for one-tap sends. */
+  whatsappNumber: string | null;
+  /** Latest alert message waiting for a WhatsApp tap; survives restarts. */
+  pendingWhatsappMessage: string | null;
 
   startMock: (scenario: MockScenario) => Promise<void>;
   startBle: (deviceId: string) => Promise<void>;
@@ -102,6 +118,14 @@ interface MonitorState {
   setLastBackupExportAt: (ts: number) => void;
   setBackupNagDismissed: () => void;
   setBackupFolderUri: (uri: string | null) => void;
+  setCaregiverEnabled: (enabled: boolean) => void;
+  setCaregiverConfig: (cfg: {
+    telegramBotToken?: string | null;
+    telegramChatId?: string | null;
+    whatsappNumber?: string | null;
+  }) => void;
+  /** Consumed the pending WhatsApp alert (sent or dismissed). */
+  clearPendingWhatsapp: () => void;
   /**
    * Called once at app start. If a BLE session was live when the app last
    * died (crash, process reclaim), resume it — the user intent was explicit.
@@ -189,6 +213,33 @@ export const useMonitorStore = create<MonitorState>()(
               ? `FC ${event.bpm} bpm durante ${Math.round((event.durationMs ?? 0) / 1000)}s`
               : `Pausa detectada: intervalo de ${event.rrIntervalMs} ms`;
           void fireAlert('⚠️ Evento cardíaco', body).catch(console.warn);
+          const eventMsg = buildEventMessage(event);
+          relayCaregiver(eventMsg, eventMsg);
+        }
+      };
+
+      /**
+       * Caregiver relay — Telegram goes out automatically; WhatsApp gets
+       * queued as a one-tap pending message (no free bot API exists).
+       * `whatsappText` is only passed for cardiac events, not outages.
+       */
+      const relayCaregiver = (
+        text: string,
+        whatsappText?: string,
+      ): void => {
+        const {
+          caregiverEnabled,
+          telegramBotToken,
+          telegramChatId,
+          whatsappNumber,
+        } = get();
+        if (!caregiverEnabled) return;
+        if (telegramBotToken && telegramChatId) {
+          void sendTelegramMessage(telegramBotToken, telegramChatId, text)
+            .catch(() => {});
+        }
+        if (whatsappText && whatsappNumber) {
+          set({ pendingWhatsappMessage: whatsappText });
         }
       };
 
@@ -215,6 +266,7 @@ export const useMonitorStore = create<MonitorState>()(
             '⌚ Reloj sin datos',
             'Conectado pero sin datos — revisa «Emitir FC» en el reloj',
           ).catch(console.warn);
+          relayCaregiver(buildOutageMessage('noData'));
         }, DISCONNECT_ALERT_MS);
       };
 
@@ -247,6 +299,7 @@ export const useMonitorStore = create<MonitorState>()(
               '⌚ Reloj sin conexión',
               'Sin datos — reintentando la conexión…',
             ).catch(console.warn);
+            relayCaregiver(buildOutageMessage('disconnect'));
           }, DISCONNECT_ALERT_MS);
         }
       };
@@ -347,7 +400,9 @@ export const useMonitorStore = create<MonitorState>()(
             events,
             thresholds,
           );
-          await fireAlert('🌅 Informe nocturno', formatReportSummary(report));
+          const summary = formatReportSummary(report);
+          await fireAlert('🌅 Informe nocturno', summary);
+          relayCaregiver(buildMorningMessage(summary), summary);
           // Watermark advances only after the notification went out — a
           // failed alert must not mark the night as reported.
           set({ lastReportedAt: reportEnd });
@@ -439,6 +494,11 @@ export const useMonitorStore = create<MonitorState>()(
         lastBackupExportAt: null,
         backupFolderUri: null,
         backupNagDismissed: false,
+        caregiverEnabled: false,
+        telegramBotToken: null,
+        telegramChatId: null,
+        whatsappNumber: null,
+        pendingWhatsappMessage: null,
 
         startMock: async (scenario) => {
           await beginSession();
@@ -592,6 +652,10 @@ export const useMonitorStore = create<MonitorState>()(
         setLastBackupExportAt: (ts) => set({ lastBackupExportAt: ts }),
         setBackupNagDismissed: () => set({ backupNagDismissed: true }),
         setBackupFolderUri: (uri) => set({ backupFolderUri: uri }),
+        setCaregiverEnabled: (enabled) =>
+          set({ caregiverEnabled: enabled }),
+        setCaregiverConfig: (cfg) => set(cfg),
+        clearPendingWhatsapp: () => set({ pendingWhatsappMessage: null }),
 
         syncHealthConnect: async () => {
           const { healthConnectEnabled, lastHcSyncAt } = get();

@@ -13,6 +13,7 @@ import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { bucketSeries, computeTrend } from '@/domain/hrChart';
 import { formatDuration } from '@/domain/morningReport';
 import { activeLowThreshold } from '@/domain/thresholds';
+import { openWhatsappAlert } from '@/features/caregiver/whatsapp';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -50,6 +51,9 @@ export default function MonitorScreen() {
     sensorLabel,
     bleDevice,
     reconnectAttempt,
+    whatsappNumber,
+    pendingWhatsappMessage,
+    clearPendingWhatsapp,
     startMock,
     startBle,
     stop,
@@ -244,6 +248,30 @@ export default function MonitorScreen() {
               {new Date(lastEvent.timestamp).toLocaleTimeString()}
             </ThemedText>
           </ThemedView>
+        )}
+
+        {pendingWhatsappMessage !== null && whatsappNumber !== null && (
+          <Pressable
+            onPress={() => {
+              void openWhatsappAlert(
+                whatsappNumber,
+                pendingWhatsappMessage,
+              );
+              clearPendingWhatsapp();
+            }}
+            onLongPress={clearPendingWhatsapp}
+            style={[
+              styles.alertBox,
+              { backgroundColor: '#1F7A46', alignSelf: 'stretch' },
+            ]}>
+            <ThemedText type="smallBold" style={{ color: '#fff' }}>
+              📤 Aviso pendiente — enviar por WhatsApp
+            </ThemedText>
+            <ThemedText type="small" style={{ color: '#d7f0e0' }}>
+              Un toque abre el chat con el aviso ya escrito. Mantén para
+              descartar.
+            </ThemedText>
+          </Pressable>
         )}
 
         {/* Source picker */}
