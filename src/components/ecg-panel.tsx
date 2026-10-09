@@ -15,8 +15,6 @@ import {
   MockEcgSensor,
   type MockEcgScenario,
 } from '@/sensors/polar/MockEcgSensor';
-import { useTheme } from '@/hooks/use-theme';
-
 /** Rolling window length (~7 s at the H10's fixed 130 Hz). */
 const WINDOW_SAMPLES = 910;
 /** How often the morphology analysis re-runs over the window. */
@@ -37,15 +35,18 @@ interface EcgPanelProps {
  * underneath — this only borrows the strap's second BLE service.
  */
 export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
-  const theme = useTheme();
   const [samples, setSamples] = useState<number[]>([]);
   const [report, setReport] = useState<EcgRhythmReport | null>(null);
+  const [flags, setFlags] = useState<string[]>([]);
   const [state, setState] = useState<string>('connecting');
   const [gain, setGain] = useState(1);
   const [scenario, setScenario] = useState<MockEcgScenario>('normal');
   const [savedStrips, setSavedStrips] = useState(0);
   const buf = useRef<number[]>([]);
   const sourceRef = useRef<IEcgSource | null>(null);
+  // Flags latch: a pattern seen once stays visible while the window
+  // slides past it (e.g. a dropped beat only sits in-frame briefly).
+  const flagsSeen = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const src = createSource();
@@ -65,7 +66,19 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
     }, 250);
     const analyze = setInterval(() => {
       const w = buf.current.slice(-WINDOW_SAMPLES);
-      if (w.length >= 130) setReport(analyzeEcgStrip(w, 130));
+      if (w.length >= 130) {
+        const r = analyzeEcgStrip(w, 130);
+        setReport(r);
+        const seen = flagsSeen.current;
+        let changed = false;
+        for (const f of r.flags) {
+          if (!seen.has(f)) {
+            seen.add(f);
+            changed = true;
+          }
+        }
+        if (changed) setFlags([...seen]);
+      }
     }, ANALYZE_MS);
 
     return () => {
@@ -105,12 +118,11 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
         </View>
       )}
 
-      {report !== null &&
-        report.flags.map((f) => (
-          <ThemedText key={f} type="small" style={styles.flag}>
-            ⚠️ {f}
-          </ThemedText>
-        ))}
+      {flags.map((f) => (
+        <ThemedText key={f} type="small" style={styles.flag}>
+          ⚠️ {f}
+        </ThemedText>
+      ))}
 
       {isMock && (
         <View style={styles.chipRow}>
@@ -120,16 +132,18 @@ export function EcgPanel({ createSource, title, isMock }: EcgPanelProps) {
                 key={s}
                 onPress={() => {
                   setScenario(s);
+                  flagsSeen.current.clear();
+                  setFlags([]);
                   const src = sourceRef.current;
                   if (src instanceof MockEcgSensor) src.setScenario(s);
                 }}
                 style={[
                   styles.chip,
-                  scenario === s && {
-                    backgroundColor: theme.backgroundElement,
-                  },
+                  scenario === s && styles.chipSelected,
                 ]}>
-                <ThemedText type="small">
+                <ThemedText
+                  type="small"
+                  style={scenario === s ? styles.chipSelectedText : undefined}>
                   {MOCK_ECG_SCENARIO_LABELS[s]}
                 </ThemedText>
               </Pressable>
@@ -197,6 +211,11 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(128,128,128,0.4)',
   },
+  chipSelected: {
+    backgroundColor: '#2E7D32',
+    borderColor: '#2E7D32',
+  },
+  chipSelectedText: { color: '#ffffff' },
   controlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
