@@ -7,13 +7,19 @@
     "icon": "./assets/images/icon.png",
     "scheme": "heartmonitor",
     "userInterfaceStyle": "automatic",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/a04e4880-3c96-4e92-99da-dce9b08751c5"
+    },
     "ios": {
       "icon": "./assets/expo.icon"
     },
     "android": {
       "package": "com.heartmonitor.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0d1117",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -39,14 +45,20 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#0d1117",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 200
         }
       ],
       "react-native-ble-plx",
       "expo-sqlite",
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#E5484D"
+        }
+      ],
       "./plugins/withBleForegroundService",
       "./plugins/withAndroidAutoBackup",
       "expo-sharing",
