@@ -3,6 +3,7 @@ import {
   analyzeEcgStrip,
   classifyPauseEvent,
 } from '@/domain/ecgAnalysis';
+import { removeBaselineWander } from '@/domain/ecgFilter';
 import { isNightTime } from '@/domain/thresholds';
 import { EcgSessionRecorder } from '@/features/ecg/ecgSessionRecorder';
 import { saveStrip } from '@/features/ecg/stripStore';
@@ -42,6 +43,22 @@ const BUFFER_SAMPLES = 45 * SAMPLE_RATE;
 const CAPTURE_SAMPLES = 30 * SAMPLE_RATE;
 /** Wait after an event so the strip catches the recovery beats too. */
 const CAPTURE_DELAY_MS = 6_000;
+/**
+ * One event shows up in several consecutive HR readings — dedupe so a
+ * single pause cannot file five strips in the same minute.
+ */
+const CAPTURE_DEDUPE_MS = 90_000;
+/**
+ * Strips are still saved every time, but the notification only fires
+ * once per window — a busy night batches into 'N tiras guardadas'.
+ */
+const NOTIFY_GAP_MS = 5 * 60_000;
+/**
+ * Median |sample-to-sample| above this = muscle-noise window: a pause
+ * 'detected' there is a missed-beat artefact, so the strip is filed
+ * unclassified instead of stamped with a wrong morphology.
+ */
+const NOISE_FLOOR_UV = 80;
 /** How often the sleep-window check re-evaluates 'night' mode. */
 const EVAL_MS = 60_000;
 
@@ -57,6 +74,13 @@ class EcgAutoService {
   private starting = false;
   /** Manual stop while an auto mode runs: pause auto-start this long. */
   private suppressUntil = 0;
+  /** Last strip filed — blocks duplicate captures of the same event. */
+  private lastCaptureAt = 0;
+  /** Last notification actually fired — strips in between get batched. */
+  private lastNotifyAt = 0;
+  /** Strips saved since the last notification went out. */
+  private pendingNotify = 0;
+  private notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Called when the BLE monitor session attaches to a strap. */
   attach(deviceId: string, label: string, mode: EcgAutoMode): void {
@@ -105,28 +129,85 @@ class EcgAutoService {
     for (const event of events) {
       if (event.type !== 'pause' && event.type !== 'bradycardia') continue;
       const ts = event.timestamp;
-      setTimeout(() => {
-        const shot = this.buf.slice(-CAPTURE_SAMPLES);
-        if (shot.length < SAMPLE_RATE) return;
-        const cls = classifyPauseEvent(shot, SAMPLE_RATE);
-        saveStrip({
-          timestamp: ts,
-          sampleRateHz: SAMPLE_RATE,
-          samples: shot,
-          report: analyzeEcgStrip(shot, SAMPLE_RATE),
-          label:
-            event.type === 'bradycardia'
-              ? 'bradicardia — tira automática en el evento'
-              : cls.label,
-          auto: true,
-        });
+      setTimeout(() => this.capture(ts, event), CAPTURE_DELAY_MS);
+    }
+  }
+
+  /** Snapshot + classify + file the strip, then batch-notify. */
+  private capture(ts: number, event: AlertEvent): void {
+    if (Date.now() - this.lastCaptureAt < CAPTURE_DEDUPE_MS) return;
+    const shot = this.buf.slice(-CAPTURE_SAMPLES);
+    if (shot.length < SAMPLE_RATE) return;
+    this.lastCaptureAt = Date.now();
+
+    // Classify on the wander-filtered copy — a slow drift inside the
+    // gap can fake a lone-P bump on the raw signal. The strip itself
+    // keeps the raw samples for the cardiologist.
+    const clean = removeBaselineWander(shot, SAMPLE_RATE);
+    const diffs = [] as number[];
+    for (let i = 1; i < clean.length; i++) {
+      diffs.push(Math.abs(clean[i] - clean[i - 1]));
+    }
+    diffs.sort((a, b) => a - b);
+    const noise = diffs.length > 0 ? diffs[Math.floor(diffs.length / 2)] : 0;
+    const noisy = noise > NOISE_FLOOR_UV;
+    const cls = noisy
+      ? {
+          kind: 'none' as const,
+          label: 'tira automática — ventana con ruido muscular (revisar)',
+          gapMs: 0,
+        }
+      : classifyPauseEvent(clean, SAMPLE_RATE);
+
+    saveStrip({
+      timestamp: ts,
+      sampleRateHz: SAMPLE_RATE,
+      samples: shot,
+      report: analyzeEcgStrip(clean, SAMPLE_RATE),
+      label:
+        event.type === 'bradycardia'
+          ? 'bradicardia — tira automática en el evento'
+          : cls.label,
+      auto: true,
+    });
+    this.notify(
+      event.type === 'bradycardia'
+        ? `Bradicardia ${event.bpm ?? '?'} bpm — tira de 30 s en Informes`
+        : `${cls.label}${cls.gapMs > 0 ? ` · hueco ${cls.gapMs} ms` : ''}`,
+    );
+  }
+
+  /**
+   * At most one notification per NOTIFY_GAP_MS: the first capture
+   * notifies right away, later ones pile up and flush as a count.
+   */
+  private notify(body: string): void {
+    const now = Date.now();
+    if (now - this.lastNotifyAt >= NOTIFY_GAP_MS) {
+      const extra =
+        this.pendingNotify > 0
+          ? ` (+${this.pendingNotify} tira${this.pendingNotify > 1 ? 's' : ''} antes)`
+          : '';
+      this.pendingNotify = 0;
+      this.lastNotifyAt = now;
+      void fireAlert('📼 Tira ECG guardada', body + extra).catch(
+        () => undefined,
+      );
+      return;
+    }
+    this.pendingNotify += 1;
+    if (!this.notifyTimer) {
+      this.notifyTimer = setTimeout(() => {
+        this.notifyTimer = null;
+        if (this.pendingNotify === 0) return;
+        const n = this.pendingNotify;
+        this.pendingNotify = 0;
+        this.lastNotifyAt = Date.now();
         void fireAlert(
-          '📼 Tira ECG guardada',
-          event.type === 'bradycardia'
-            ? `Bradicardia ${event.bpm ?? '?'} bpm — tira de 30 s en Informes`
-            : `${cls.label} · hueco ${cls.gapMs} ms`,
+          '📼 Tiras ECG guardadas',
+          `${n} tira${n > 1 ? 's' : ''} automática${n > 1 ? 's' : ''} en Informes`,
         ).catch(() => undefined);
-      }, CAPTURE_DELAY_MS);
+      }, NOTIFY_GAP_MS - (now - this.lastNotifyAt));
     }
   }
 
@@ -184,6 +265,10 @@ class EcgAutoService {
   }
 
   private async stopStream(): Promise<void> {
+    if (this.notifyTimer) {
+      clearTimeout(this.notifyTimer);
+      this.notifyTimer = null;
+    }
     this.unsubFrames?.();
     this.unsubFrames = null;
     const src = this.source;
