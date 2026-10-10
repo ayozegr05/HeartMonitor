@@ -1,12 +1,19 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useEffect, useState } from 'react';
-import { Animated, FlatList, Pressable, StyleSheet } from 'react-native';
+import {
+  Animated,
+  FlatList,
+  Modal,
+  Pressable,
+  StyleSheet,
+} from 'react-native';
 import {
     SafeAreaView,
     useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
 import { HrChart } from '@/components/hr-chart';
+import { EcgPanel } from '@/components/ecg-panel';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
@@ -24,6 +31,9 @@ import {
     MOCK_SCENARIO_LABELS,
     type MockScenario,
 } from '@/sensors/MockHeartRateSensor';
+import type { IEcgSource } from '@/sensors/ecg';
+import { MockEcgSensor } from '@/sensors/polar/MockEcgSensor';
+import { PolarEcgSource } from '@/sensors/polar/PolarEcgSource';
 import type { ScannedSensor } from '@/sensors/types';
 
 const STATE_LABELS: Record<string, string> = {
@@ -129,6 +139,7 @@ export default function MonitorScreen() {
   }, [streaming]);
   const [mode, setMode] = useState<'mock' | 'ble'>('mock');
   const [scenario, setScenario] = useState<MockScenario>('normal');
+  const [ecgOpen, setEcgOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [devices, setDevices] = useState<ScannedSensor[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -175,6 +186,17 @@ export default function MonitorScreen() {
     } catch {
       setError(`No se pudo conectar a ${device.name}`);
     }
+  };
+
+  /** ECG source: the real Polar PMD stream on the strap, else the mock. */
+  const makeEcgSource = (): IEcgSource => {
+    if (bleDevice && /polar|h10/i.test(bleDevice.label)) {
+      return new PolarEcgSource(
+        () => getBleManager().connectToDevice(bleDevice.id),
+        `ECG ${bleDevice.label}`,
+      );
+    }
+    return new MockEcgSensor();
   };
 
   return (
@@ -262,6 +284,14 @@ export default function MonitorScreen() {
               </ThemedText>
             </Pressable>
           ))}
+          <Pressable
+            onPress={() => setEcgOpen(true)}
+            style={[
+              styles.chip,
+              { backgroundColor: theme.backgroundElement },
+            ]}>
+            <ThemedText type="small">ECG</ThemedText>
+          </Pressable>
         </ThemedView>
 
         {mode === 'mock' ? (
@@ -368,6 +398,37 @@ export default function MonitorScreen() {
 
         <ThemedView style={styles.spacer} />
 
+        <Modal
+          visible={ecgOpen}
+          animationType="slide"
+          onRequestClose={() => setEcgOpen(false)}>
+          <ThemedView
+            style={[
+              styles.ecgModal,
+              { paddingTop: insets.top + Spacing.three },
+            ]}>
+            <EcgPanel
+              createSource={makeEcgSource}
+              isMock={!(bleDevice && /polar|h10/i.test(bleDevice.label))}
+              liveStatus={
+                streaming
+                  ? `❤️ ${currentReading ? currentReading.bpm : '—'} bpm · monitorizando`
+                  : 'monitor parado'
+              }
+              title={
+                bleDevice && /polar|h10/i.test(bleDevice.label)
+                  ? `ECG — ${bleDevice.label}`
+                  : 'ECG — simulado'
+              }
+            />
+            <Pressable
+              onPress={() => setEcgOpen(false)}
+              style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText type="smallBold">Cerrar</ThemedText>
+            </Pressable>
+          </ThemedView>
+        </Modal>
+
         <Pressable
           onPress={() =>
             streaming ? stop() : mode === 'mock' ? startMock(scenario) : undefined
@@ -436,6 +497,11 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
     padding: Spacing.three,
     marginBottom: Spacing.two,
+  },
+  ecgModal: {
+    flex: 1,
+    paddingHorizontal: Spacing.four,
+    gap: Spacing.three,
   },
   primaryButton: {
     alignSelf: 'stretch',

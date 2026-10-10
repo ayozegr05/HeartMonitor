@@ -20,6 +20,8 @@ export interface WeeklyReport {
   bradycardiaCount: number;
   pauseCount: number;
   longestPauseMs: number | null;
+  /** Readings-mean of session RMSSD values; null when no RR data. */
+  avgRmssdMs: number | null;
   /** The session reports that fell inside the window, newest first. */
   perSession: SessionReport[];
 }
@@ -51,6 +53,8 @@ export function buildWeeklyReport(
   let pauseCount = 0;
   let longestPauseMs: number | null = null;
   let nightsCovered = 0;
+  let rmssdSum = 0;
+  let rmssdNights = 0;
 
   for (const r of inPeriod) {
     totalMonitoredMs += r.durationMs;
@@ -71,6 +75,10 @@ export function buildWeeklyReport(
           ? r.longestPauseMs
           : Math.max(longestPauseMs, r.longestPauseMs);
     if (r.nightCoverageMs > 0) nightsCovered += 1;
+    if (r.rmssdMs !== null) {
+      rmssdSum += r.rmssdMs;
+      rmssdNights += 1;
+    }
   }
 
   return {
@@ -88,6 +96,7 @@ export function buildWeeklyReport(
     bradycardiaCount,
     pauseCount,
     longestPauseMs,
+    avgRmssdMs: rmssdNights > 0 ? Math.round(rmssdSum / rmssdNights) : null,
     perSession: inPeriod,
   };
 }

@@ -8,6 +8,7 @@ import {
 import { parseHeartRateMeasurement } from '@/domain/heartRateParser';
 import type { HRReading } from '@/domain/models';
 
+import { acquireBleLink, releaseBleLink } from './bleLink';
 import type {
   IHeartRateSensor,
   ScannedSensor,
@@ -103,6 +104,7 @@ export class BleHeartRateSensor implements IHeartRateSensor {
     this.setState('connecting');
 
     const connected = await this.device.connect();
+    acquireBleLink();
     await connected.discoverAllServicesAndCharacteristics();
 
     this.disconnectSub = connected.onDisconnected(() => {
@@ -133,7 +135,7 @@ export class BleHeartRateSensor implements IHeartRateSensor {
     this.disconnectSub?.remove();
     this.monitorSub = null;
     this.disconnectSub = null;
-    await this.device.cancelConnection().catch(() => {});
+    await releaseBleLink(this.device);
     this.setState('idle');
   }
 
