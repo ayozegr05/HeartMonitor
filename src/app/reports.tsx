@@ -129,7 +129,107 @@ function StatBlock({
   );
 }
 
-function ReportCard({ item, thresholds }: { item: SessionWithReport; thresholds: ThresholdProfile }) {
+/** One compact strip row — shared by session blocks and the orphan card. */
+function StripRow({
+  s,
+  onOpen,
+  onDelete,
+}: {
+  s: CapturedStrip;
+  onOpen: (s: CapturedStrip) => void;
+  onDelete: (s: CapturedStrip) => void;
+}) {
+  const theme = useTheme();
+  const when = new Date(s.timestamp).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return (
+    <Pressable
+      onPress={() => onOpen(s)}
+      onLongPress={() => onDelete(s)}
+      style={({ pressed }) => [
+        styles.stripRow,
+        { backgroundColor: theme.background, opacity: pressed ? 0.7 : 1 },
+      ]}>
+      <View style={{ flex: 1 }}>
+        <ThemedText type="smallBold">
+          {when} · {s.report.meanBpm} bpm
+          {s.auto ? ' · auto' : ''}
+        </ThemedText>
+        {s.label !== undefined && (
+          <ThemedText type="small" themeColor="textSecondary">
+            {s.label}
+          </ThemedText>
+        )}
+      </View>
+      <ThemedText
+        type="small"
+        themeColor="textSecondary"
+        style={{ color: s.report.flags.length > 0 ? '#FFB020' : '#2E7D32' }}>
+        {s.report.flags.length > 0
+          ? `⚠️ ${s.report.flags.length} aviso${s.report.flags.length === 1 ? '' : 's'}`
+          : '✓ sin avisos'}
+      </ThemedText>
+    </Pressable>
+  );
+}
+
+/** One ECG recording row — shared by session blocks and the orphan card. */
+function EcgSessionRow({
+  s,
+  onExport,
+  onDelete,
+}: {
+  s: EcgSessionInfo;
+  onExport: (s: EcgSessionInfo) => void;
+  onDelete: (s: EcgSessionInfo) => void;
+}) {
+  const theme = useTheme();
+  const when = new Date(s.startedAt).toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const mins = Math.round(s.samples / s.sampleRateHz / 60);
+  return (
+    <Pressable
+      onPress={() => onExport(s)}
+      onLongPress={() => onDelete(s)}
+      style={({ pressed }) => [
+        styles.stripRow,
+        { backgroundColor: theme.background, opacity: pressed ? 0.7 : 1 },
+      ]}>
+      <ThemedText type="smallBold" style={{ flex: 1 }}>
+        {when}
+      </ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        {mins} min · {s.samples.toLocaleString('es-ES')} muestras
+      </ThemedText>
+    </Pressable>
+  );
+}
+
+function ReportCard({
+  item,
+  thresholds,
+  strips,
+  ecgSessions,
+  onOpenStrip,
+  onDeleteStrip,
+  onExportSession,
+  onDeleteSession,
+}: {
+  item: SessionWithReport;
+  thresholds: ThresholdProfile;
+  strips: CapturedStrip[];
+  ecgSessions: EcgSessionInfo[];
+  onOpenStrip: (s: CapturedStrip) => void;
+  onDeleteStrip: (s: CapturedStrip) => void;
+  onExportSession: (s: EcgSessionInfo) => void;
+  onDeleteSession: (s: EcgSessionInfo) => void;
+}) {
   const theme = useTheme();
   const { session, report, events } = item;
   const live = session.endedAt === null;
@@ -223,8 +323,16 @@ function ReportCard({ item, thresholds }: { item: SessionWithReport; thresholds:
           </View>
         </>
       )}
+      {(strips.length > 0 || ecgSessions.length > 0) && (
+        <ThemedText type="small" themeColor="textSecondary">
+          {strips.length > 0 &&
+            `📼 ${strips.length} tira${strips.length === 1 ? '' : 's'} ECG`}
+          {strips.length > 0 && ecgSessions.length > 0 && ' · '}
+          {ecgSessions.length > 0 && '💾 grabación completa (CSV)'}
+        </ThemedText>
+      )}
       <ThemedText type="small" themeColor="textSecondary">
-        {expanded ? '▲ Ocultar' : '▼ Ver gráfica'}
+        {expanded ? '▲ Ocultar' : '▼ Ver detalle'}
       </ThemedText>
       {expanded && (
         <>
@@ -261,6 +369,29 @@ function ReportCard({ item, thresholds }: { item: SessionWithReport; thresholds:
               ))}
             </View>
           )}
+          {strips.length > 0 && (
+            <View style={styles.eventList}>
+              <ThemedText type="smallBold" themeColor="textSecondary">
+                Tiras ECG de esta sesión
+              </ThemedText>
+              {strips.map((s) => (
+                <StripRow
+                  key={s.timestamp}
+                  s={s}
+                  onOpen={onOpenStrip}
+                  onDelete={onDeleteStrip}
+                />
+              ))}
+            </View>
+          )}
+          {ecgSessions.map((s) => (
+            <EcgSessionRow
+              key={s.startedAt}
+              s={s}
+              onExport={onExportSession}
+              onDelete={onDeleteSession}
+            />
+          ))}
         </>
       )}
     </Pressable>
@@ -360,53 +491,19 @@ function StripsCard({
   onOpen: (s: CapturedStrip) => void;
   onDelete: (s: CapturedStrip) => void;
 }) {
-  const theme = useTheme();
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
       <ThemedView style={styles.cardHeader}>
         <ThemedText type="smallBold" style={styles.cardTitle}>
-          Tiras ECG capturadas
+          Tiras ECG sueltas
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          {strips.length} tira{strips.length === 1 ? '' : 's'} de 30 s · toca para ver
+          {strips.length} tira{strips.length === 1 ? '' : 's'} de 30 s sin sesión asociada · toca para ver
         </ThemedText>
       </ThemedView>
-      {strips.map((s) => {
-        const when = new Date(s.timestamp).toLocaleTimeString(undefined, {
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-        return (
-          <Pressable
-            key={s.timestamp}
-            onPress={() => onOpen(s)}
-            onLongPress={() => onDelete(s)}
-            style={({ pressed }) => [
-              styles.stripRow,
-              { backgroundColor: theme.background, opacity: pressed ? 0.7 : 1 },
-            ]}>
-            <View style={{ flex: 1 }}>
-              <ThemedText type="smallBold">
-                {when} · {s.report.meanBpm} bpm
-                {s.auto ? ' · auto' : ''}
-              </ThemedText>
-              {s.label !== undefined && (
-                <ThemedText type="small" themeColor="textSecondary">
-                  {s.label}
-                </ThemedText>
-              )}
-            </View>
-            <ThemedText
-              type="small"
-              themeColor="textSecondary"
-              style={{ color: s.report.flags.length > 0 ? '#FFB020' : '#2E7D32' }}>
-              {s.report.flags.length > 0
-                ? `⚠️ ${s.report.flags.length} aviso${s.report.flags.length === 1 ? '' : 's'}`
-                : '✓ sin avisos'}
-            </ThemedText>
-          </Pressable>
-        );
-      })}
+      {strips.map((s) => (
+        <StripRow key={s.timestamp} s={s} onOpen={onOpen} onDelete={onDelete} />
+      ))}
       <ThemedText type="small" themeColor="textSecondary">
         Mantén pulsada una tira para borrarla.
       </ThemedText>
@@ -423,43 +520,24 @@ function SessionsCard({
   onExport: (s: EcgSessionInfo) => void;
   onDelete: (s: EcgSessionInfo) => void;
 }) {
-  const theme = useTheme();
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
       <ThemedView style={styles.cardHeader}>
         <ThemedText type="smallBold" style={styles.cardTitle}>
-          Sesiones ECG grabadas
+          Grabaciones ECG sueltas
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
           stream completo · toca para exportar CSV entero
         </ThemedText>
       </ThemedView>
-      {sessions.map((s) => {
-        const when = new Date(s.startedAt).toLocaleString(undefined, {
-          day: 'numeric',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-        const mins = Math.round(s.samples / s.sampleRateHz / 60);
-        return (
-          <Pressable
-            key={s.startedAt}
-            onPress={() => onExport(s)}
-            onLongPress={() => onDelete(s)}
-            style={({ pressed }) => [
-              styles.stripRow,
-              { backgroundColor: theme.background, opacity: pressed ? 0.7 : 1 },
-            ]}>
-            <ThemedText type="smallBold" style={{ flex: 1 }}>
-              {when}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              {mins} min · {s.samples.toLocaleString('es-ES')} muestras
-            </ThemedText>
-          </Pressable>
-        );
-      })}
+      {sessions.map((s) => (
+        <EcgSessionRow
+          key={s.startedAt}
+          s={s}
+          onExport={onExport}
+          onDelete={onDelete}
+        />
+      ))}
       <ThemedText type="small" themeColor="textSecondary">
         Mantén pulsada una sesión para borrarla.
       </ThemedText>
@@ -476,10 +554,33 @@ export default function ReportsScreen() {
   const [strips, setStrips] = useState<CapturedStrip[]>([]);
   const [sessions, setSessions] = useState<EcgSessionInfo[]>([]);
   const [activeStrip, setActiveStrip] = useState<CapturedStrip | null>(null);
+  /** 'Now' at the last data load — window ends for live sessions. */
+  const [nowMs, setNowMs] = useState(0);
   const hasAnyEvents = items.some((i) => i.report.eventCount > 0);
+
+  // File each strip and ECG recording under the monitor session whose
+  // window contains it (sessions never overlap, so no double-claim).
+  const inWindow = (ts: number, item: SessionWithReport): boolean =>
+    ts >= item.session.startedAt &&
+    ts <= (item.session.endedAt ?? nowMs);
+  const stripsOf = (item: SessionWithReport): CapturedStrip[] =>
+    strips.filter((s) => inWindow(s.timestamp, item));
+  const recOverlaps = (s: EcgSessionInfo, item: SessionWithReport): boolean =>
+    s.startedAt <= (item.session.endedAt ?? nowMs) &&
+    s.startedAt + (s.samples / s.sampleRateHz) * 1000 >=
+      item.session.startedAt;
+  const ecgSessionsOf = (item: SessionWithReport): EcgSessionInfo[] =>
+    sessions.filter((s) => recOverlaps(s, item));
+  const orphanStrips = strips.filter(
+    (s) => !items.some((i) => inWindow(s.timestamp, i)),
+  );
+  const orphanSessions = sessions.filter(
+    (s) => !items.some((i) => recOverlaps(s, i)),
+  );
 
   useFocusEffect(
     useCallback(() => {
+      setNowMs(Date.now());
       loadSessionReports(thresholds)
         .then((loaded) => {
           setItems(loaded);
@@ -531,38 +632,44 @@ export default function ReportsScreen() {
               {weekly && weekly.sessionsCount > 0 && !onlyWithEvents && (
                 <WeeklyCard weekly={weekly} />
               )}
-              {sessions.length > 0 && !onlyWithEvents && (
-                <SessionsCard
-                  sessions={sessions}
-                  onExport={(s) => {
-                    shareEcgSessionCsv(s).catch((e) =>
-                      Alert.alert(
-                        'No se pudo exportar',
-                        e instanceof Error ? e.message : 'Error desconocido',
-                      ),
-                    );
-                  }}
-                  onDelete={(s) => {
-                    removeEcgSession(s.startedAt);
-                    setSessions((prev) =>
-                      prev.filter((x) => x.startedAt !== s.startedAt),
-                    );
-                  }}
-                />
-              )}
-              {strips.length > 0 && !onlyWithEvents && (
-                <StripsCard
-                  strips={strips}
-                  onOpen={setActiveStrip}
-                  onDelete={(s) => {
-                    removeStrip(s.timestamp);
-                    setStrips((prev) =>
-                      prev.filter((x) => x.timestamp !== s.timestamp),
-                    );
-                  }}
-                />
-              )}
             </>
+          }
+          ListFooterComponent={
+            !onlyWithEvents ? (
+              <>
+                {orphanSessions.length > 0 && (
+                  <SessionsCard
+                    sessions={orphanSessions}
+                    onExport={(s) => {
+                      shareEcgSessionCsv(s).catch((e) =>
+                        Alert.alert(
+                          'No se pudo exportar',
+                          e instanceof Error ? e.message : 'Error desconocido',
+                        ),
+                      );
+                    }}
+                    onDelete={(s) => {
+                      removeEcgSession(s.startedAt);
+                      setSessions((prev) =>
+                        prev.filter((x) => x.startedAt !== s.startedAt),
+                      );
+                    }}
+                  />
+                )}
+                {orphanStrips.length > 0 && (
+                  <StripsCard
+                    strips={orphanStrips}
+                    onOpen={setActiveStrip}
+                    onDelete={(s) => {
+                      removeStrip(s.timestamp);
+                      setStrips((prev) =>
+                        prev.filter((x) => x.timestamp !== s.timestamp),
+                      );
+                    }}
+                  />
+                )}
+              </>
+            ) : null
           }
           data={
             onlyWithEvents
@@ -579,7 +686,33 @@ export default function ReportsScreen() {
             </ThemedText>
           }
           renderItem={({ item }) => (
-            <ReportCard item={item} thresholds={thresholds} />
+            <ReportCard
+              item={item}
+              thresholds={thresholds}
+              strips={stripsOf(item)}
+              ecgSessions={ecgSessionsOf(item)}
+              onOpenStrip={setActiveStrip}
+              onDeleteStrip={(s) => {
+                removeStrip(s.timestamp);
+                setStrips((prev) =>
+                  prev.filter((x) => x.timestamp !== s.timestamp),
+                );
+              }}
+              onExportSession={(s) => {
+                shareEcgSessionCsv(s).catch((e) =>
+                  Alert.alert(
+                    'No se pudo exportar',
+                    e instanceof Error ? e.message : 'Error desconocido',
+                  ),
+                );
+              }}
+              onDeleteSession={(s) => {
+                removeEcgSession(s.startedAt);
+                setSessions((prev) =>
+                  prev.filter((x) => x.startedAt !== s.startedAt),
+                );
+              }}
+            />
           )}
         />
         <Modal
