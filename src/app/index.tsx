@@ -12,6 +12,10 @@ import { EcgPanel } from '@/components/ecg-panel';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import {
+    deviceCapabilities,
+    resolveDeviceKind,
+} from '@/domain/deviceCapabilities';
 import { bucketSeries, computeTrend } from '@/domain/hrChart';
 import { formatDuration } from '@/domain/morningReport';
 import { activeLowThreshold } from '@/domain/thresholds';
@@ -58,6 +62,7 @@ export default function MonitorScreen() {
     eventCount,
     sensorLabel,
     bleDevice,
+    deviceProfile,
     reconnectAttempt,
     whatsappNumber,
     pendingWhatsappMessage,
@@ -143,11 +148,14 @@ export default function MonitorScreen() {
     }
   }, [streaming]);
 
-  const isPolar = !!bleDevice && /polar|h10/i.test(bleDevice.label);
+  const deviceKind = resolveDeviceKind(deviceProfile, bleDevice?.label);
+  const caps = deviceCapabilities(deviceKind);
+  const isEcgStrap = caps.ecg && !!bleDevice;
+  const [showEcgDemo, setShowEcgDemo] = useState(false);
 
   /** ECG source: the real Polar PMD stream on the strap, else the mock. */
   const makeEcgSource = (): IEcgSource => {
-    if (isPolar && bleDevice) {
+    if (isEcgStrap && bleDevice) {
       return new PolarEcgSource(
         () => getBleManager().connectToDevice(bleDevice.id),
         `ECG ${bleDevice.label}`,
@@ -197,16 +205,44 @@ export default function MonitorScreen() {
           <ScrollView
             style={styles.ecgScroll}
             contentContainerStyle={styles.ecgScrollContent}>
-            <EcgPanel
-              createSource={makeEcgSource}
-              isMock={!isPolar}
-              liveStatus={
-                streaming
-                  ? `❤️ ${currentReading ? currentReading.bpm : '—'} bpm · monitorizando`
-                  : 'monitor parado'
-              }
-              title={isPolar ? `ECG — ${bleDevice?.label}` : 'ECG — simulado'}
-            />
+            {bleDevice && !caps.ecg && !showEcgDemo ? (
+              <ThemedView type="backgroundElement" style={styles.alertBox}>
+                <ThemedText type="smallBold">
+                  ⌚ {bleDevice.label} no envía ECG
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {deviceKind === 'watch'
+                    ? 'Los relojes solo emiten la FC por Bluetooth — las pausas, la VFC y el ECG necesitan una banda pectoral como la Polar H10.'
+                    : 'Este sensor manda FC e intervalos RR pero no el electrocardiograma — el ECG solo lo da la Polar H10.'}
+                </ThemedText>
+                <Pressable
+                  onPress={() => router.push('/settings')}
+                  style={[
+                    styles.button,
+                    { backgroundColor: theme.backgroundSelected },
+                  ]}>
+                  <ThemedText type="smallBold">Ir a Conectividad</ThemedText>
+                </Pressable>
+                <Pressable onPress={() => setShowEcgDemo(true)}>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Ver una demo del ECG →
+                  </ThemedText>
+                </Pressable>
+              </ThemedView>
+            ) : (
+              <EcgPanel
+                createSource={makeEcgSource}
+                isMock={!isEcgStrap}
+                liveStatus={
+                  streaming
+                    ? `❤️ ${currentReading ? currentReading.bpm : '—'} bpm · monitorizando`
+                    : 'monitor parado'
+                }
+                title={
+                  isEcgStrap ? `ECG — ${bleDevice?.label}` : 'ECG — simulado'
+                }
+              />
+            )}
           </ScrollView>
         ) : (
           <>
@@ -309,13 +345,25 @@ export default function MonitorScreen() {
                     </ThemedText>
                   </ThemedView>
                 )}
+                {bleDevice && deviceKind === 'watch' && (
+                  <ThemedView
+                    type="backgroundElement"
+                    style={styles.alertBox}>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      ⌚ Con {bleDevice.label} solo llega la FC — bradicardias
+                      sí, pero pausas y VFC necesitan una banda pectoral.
+                    </ThemedText>
+                  </ThemedView>
+                )}
                 {!streaming && !bleDevice && (
                   <ThemedView
                     type="backgroundElement"
                     style={styles.alertBox}>
-                    <ThemedText type="smallBold">Sin banda elegida</ThemedText>
+                    <ThemedText type="smallBold">
+                      Sin dispositivo elegido
+                    </ThemedText>
                     <ThemedText type="small" themeColor="textSecondary">
-                      Busca tu Polar H10 desde Ajustes → Conectividad
+                      Busca tu banda o reloj desde Ajustes → Conectividad
                     </ThemedText>
                     <Pressable
                       onPress={() => router.push('/settings')}

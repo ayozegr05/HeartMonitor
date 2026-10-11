@@ -26,6 +26,11 @@ import {
     buildSessionReport,
     formatReportSummary,
 } from '@/domain/morningReport';
+import {
+    deviceCapabilities,
+    resolveDeviceKind,
+    type DeviceProfile,
+} from '@/domain/deviceCapabilities';
 import { PauseDetector } from '@/domain/pauseDetection';
 import { reconnectDelayMs } from '@/domain/reconnect';
 import {
@@ -78,6 +83,12 @@ interface MonitorState {
   monitoringIntent: boolean;
   /** Last BLE sensor used; persisted so reconnects work without rescanning. */
   bleDevice: BleDeviceRef | null;
+  /**
+   * What the chosen BLE device is treated as: 'auto' infers from the
+   * advertised name (Polar H10 → full, watches → FC-only); the manual
+   * values override that guess for straps whose name we don't know.
+   */
+  deviceProfile: DeviceProfile;
   /** Reconnection attempts since the last successful stream. */
   reconnectAttempt: number;
   /**
@@ -130,6 +141,7 @@ interface MonitorState {
   /** Switches the fake rhythm mid-run; no-op unless a mock is streaming. */
   setMockScenario: (scenario: MockScenario) => void;
   setThresholds: (t: ThresholdProfile) => void;
+  setDeviceProfile: (p: DeviceProfile) => void;
   setHealthConnectEnabled: (enabled: boolean) => void;
   /** Pushes new readings to Health Connect; no-op when disabled. */
   syncHealthConnect: () => Promise<void>;
@@ -374,9 +386,10 @@ export const useMonitorStore = create<MonitorState>()(
           bleDevice: { id: deviceId, label: next.label },
           reconnectAttempt: 0,
         });
-        // Background ECG: only Polar straps expose the PMD stream; the
-        // service no-ops for anything else and for mode 'off'.
-        if (/polar|h10/i.test(next.label)) {
+        // Background ECG: only PMD-capable straps (H10) expose the
+        // stream; watches and optical sensors have nothing to attach.
+        const kind = resolveDeviceKind(get().deviceProfile, next.label);
+        if (deviceCapabilities(kind).ecg) {
           ecgAutoService.attach(deviceId, next.label, get().ecgAutoMode);
         }
       };
@@ -517,6 +530,7 @@ export const useMonitorStore = create<MonitorState>()(
         thresholds: DEFAULT_THRESHOLDS,
         monitoringIntent: false,
         bleDevice: null,
+        deviceProfile: 'auto',
         reconnectAttempt: 0,
         sessionId: null,
         sessionStartedAt: null,
@@ -683,6 +697,8 @@ export const useMonitorStore = create<MonitorState>()(
 
         setThresholds: (t) => set({ thresholds: t }),
 
+        setDeviceProfile: (p) => set({ deviceProfile: p }),
+
         setEcgAutoMode: (mode) => {
           set({ ecgAutoMode: mode });
           ecgAutoService.setMode(mode);
@@ -719,6 +735,7 @@ export const useMonitorStore = create<MonitorState>()(
       partialize: (s) => ({
         thresholds: s.thresholds,
         bleDevice: s.bleDevice,
+        deviceProfile: s.deviceProfile,
         monitoringIntent: s.monitoringIntent,
         source: s.source,
         sessionId: s.sessionId,

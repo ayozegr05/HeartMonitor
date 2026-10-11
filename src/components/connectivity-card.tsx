@@ -4,6 +4,13 @@ import { FlatList, Pressable, StyleSheet } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import {
+    describeCapabilities,
+    DEVICE_KIND_LABELS,
+    DEVICE_PROFILE_LABELS,
+    resolveDeviceKind,
+    type DeviceProfile,
+} from '@/domain/deviceCapabilities';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -20,8 +27,15 @@ import type { ScannedSensor } from '@/sensors/types';
  */
 export function ConnectivityCard() {
   const theme = useTheme();
-  const { bleDevice, rememberBleDevice, connectionState, sensorLabel } =
-    useMonitorStore();
+  const {
+    bleDevice,
+    rememberBleDevice,
+    connectionState,
+    sensorLabel,
+    deviceProfile,
+    setDeviceProfile,
+  } = useMonitorStore();
+  const deviceKind = resolveDeviceKind(deviceProfile, bleDevice?.label);
   const [scanning, setScanning] = useState(false);
   const [devices, setDevices] = useState<ScannedSensor[]>([]);
   const [btPoweredOn, setBtPoweredOn] = useState(true);
@@ -64,15 +78,48 @@ export function ConnectivityCard() {
       <ThemedText type="smallBold">📶 Conectividad</ThemedText>
       <ThemedText type="small" themeColor="textSecondary">
         {bleDevice
-          ? `Banda elegida: ${bleDevice.label}`
-          : 'Ninguna banda elegida — busca tu Polar H10 abajo'}
+          ? `Dispositivo: ${bleDevice.label}`
+          : 'Ningún dispositivo elegido — busca tu banda o reloj abajo'}
         {connectionState === 'streaming' && sensorLabel
           ? ` · activa (${sensorLabel})`
           : ''}
       </ThemedText>
+      {deviceKind && (
+        <ThemedText type="small" themeColor="textSecondary">
+          {DEVICE_KIND_LABELS[deviceKind]}: {describeCapabilities(deviceKind)}
+        </ThemedText>
+      )}
+      {bleDevice && (
+        <>
+          <ThemedView style={styles.profileRow}>
+            {(
+              Object.keys(DEVICE_PROFILE_LABELS) as DeviceProfile[]
+            ).map((p) => (
+              <Pressable
+                key={p}
+                onPress={() => setDeviceProfile(p)}
+                style={[
+                  styles.chip,
+                  { backgroundColor: theme.background },
+                  deviceProfile === p && {
+                    backgroundColor: theme.backgroundSelected,
+                  },
+                ]}>
+                <ThemedText type="small">
+                  {DEVICE_PROFILE_LABELS[p]}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </ThemedView>
+          <ThemedText type="small" themeColor="textSecondary">
+            Auto detecta por el nombre — cámbialo si tu banda sale como
+            reloj (o al revés).
+          </ThemedText>
+        </>
+      )}
       {!btPoweredOn && (
         <ThemedText type="small" style={{ color: '#FFB020' }}>
-          ⚠️ Bluetooth apagado — enciéndelo para buscar la banda
+          ⚠️ Bluetooth apagado — enciéndelo para buscar el dispositivo
         </ThemedText>
       )}
       <Pressable
@@ -111,7 +158,7 @@ export function ConnectivityCard() {
         <Pressable
           onPress={() => rememberBleDevice(null)}
           style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
-          <ThemedText type="smallBold">Olvidar banda</ThemedText>
+          <ThemedText type="smallBold">Olvidar dispositivo</ThemedText>
         </Pressable>
       )}
       {error && (
@@ -121,7 +168,7 @@ export function ConnectivityCard() {
       )}
       <ThemedText type="small" themeColor="textSecondary">
         La monitorización se arranca desde la pestaña Monitor — aquí solo
-        eliges la banda.
+        eliges el dispositivo.
       </ThemedText>
     </ThemedView>
   );
@@ -140,6 +187,12 @@ const styles = StyleSheet.create({
     marginTop: Spacing.two,
   },
   deviceList: { alignSelf: 'stretch', maxHeight: 160 },
+  profileRow: { flexDirection: 'row', gap: Spacing.two },
+  chip: {
+    borderRadius: Spacing.five,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
   deviceRow: {
     borderRadius: Spacing.two,
     padding: Spacing.three,
