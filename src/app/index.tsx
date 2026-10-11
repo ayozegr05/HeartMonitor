@@ -421,29 +421,24 @@ export default function MonitorScreen() {
 
             <ThemedView style={styles.spacer} />
 
-            <Pressable
-              onPress={() => (streaming ? stop() : onStart())}
-              disabled={!streaming && tab !== 'mock' && !bleDevice}
-              style={[
-                styles.primaryButton,
-                {
-                  backgroundColor: streaming
-                    ? '#B3261E'
-                    : !bleDevice && tab !== 'mock'
-                      ? theme.backgroundElement
-                      : '#2E7D32',
-                },
-              ]}>
-              <ThemedText type="smallBold" style={styles.primaryButtonText}>
-                {streaming
-                  ? 'Detener'
-                  : tab === 'mock'
-                    ? 'Iniciar simulación'
-                    : bleDevice
-                      ? `Iniciar con ${bleDevice.label}`
-                      : 'Elige una banda en Ajustes'}
-              </ThemedText>
-            </Pressable>
+            {(streaming || tab === 'mock' || bleDevice) && (
+              <Pressable
+                onPress={() => (streaming ? stop() : onStart())}
+                style={[
+                  styles.primaryButton,
+                  {
+                    backgroundColor: streaming ? '#B3261E' : '#2E7D32',
+                  },
+                ]}>
+                <ThemedText type="smallBold" style={styles.primaryButtonText}>
+                  {streaming
+                    ? 'Detener'
+                    : tab === 'mock'
+                      ? 'Iniciar simulación'
+                      : `Iniciar con ${bleDevice?.label}`}
+                </ThemedText>
+              </Pressable>
+            )}
           </>
         )}
       </SafeAreaView>

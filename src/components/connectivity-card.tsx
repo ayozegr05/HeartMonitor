@@ -41,6 +41,19 @@ export function ConnectivityCard() {
   const [btPoweredOn, setBtPoweredOn] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  /** Plain-words link status — "Instinct 3 conectado" / "desconectado". */
+  const statusLine = !bleDevice
+    ? 'Ningún dispositivo elegido — busca tu banda o reloj abajo'
+    : connectionState === 'streaming'
+      ? `✅ ${sensorLabel ?? bleDevice.label} conectado — monitorizando`
+      : connectionState === 'connecting'
+        ? `Conectando a ${bleDevice.label}…`
+        : connectionState === 'reconnecting'
+          ? `Reconectando a ${bleDevice.label}…`
+          : connectionState === 'disconnected' || connectionState === 'error'
+            ? `⚠️ ${bleDevice.label} desconectado`
+            : `${bleDevice.label} elegido — apagado (arranca desde Monitor)`;
+
   useEffect(() => {
     const sub = getBleManager().onStateChange(
       (state) => setBtPoweredOn(state === 'PoweredOn'),
@@ -77,12 +90,7 @@ export function ConnectivityCard() {
     <ThemedView type="backgroundElement" style={styles.card}>
       <ThemedText type="smallBold">📶 Conectividad</ThemedText>
       <ThemedText type="small" themeColor="textSecondary">
-        {bleDevice
-          ? `Dispositivo: ${bleDevice.label}`
-          : 'Ningún dispositivo elegido — busca tu banda o reloj abajo'}
-        {connectionState === 'streaming' && sensorLabel
-          ? ` · activa (${sensorLabel})`
-          : ''}
+        {statusLine}
       </ThemedText>
       {deviceKind && (
         <ThemedText type="small" themeColor="textSecondary">
