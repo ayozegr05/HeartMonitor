@@ -29,7 +29,7 @@ export default function AppTabs() {
 
       <NativeTabs.Trigger name="learn">
         <NativeTabs.Trigger.Label>Patrones</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="stethoscope" md="clinical_notes" />
+        <NativeTabs.Trigger.Icon src={require('@/assets/images/icon-patterns-book.png')} />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="settings">
