@@ -116,10 +116,17 @@ interface MonitorState {
    * classified 30 s strip and the session records to disk.
    */
   ecgAutoMode: EcgAutoMode;
+  /** Last morning report emitted — persisted so Informes can show it. */
+  lastMorningReport: { text: string; at: number } | null;
 
   startMock: (scenario: MockScenario) => Promise<void>;
   startBle: (deviceId: string) => Promise<void>;
   stop: () => Promise<void>;
+  /**
+   * Stores the chosen band WITHOUT connecting — connectivity (scan/select)
+   * lives in Ajustes while monitoring only starts on an explicit Start.
+   */
+  rememberBleDevice: (ref: BleDeviceRef | null) => void;
   /** Switches the fake rhythm mid-run; no-op unless a mock is streaming. */
   setMockScenario: (scenario: MockScenario) => void;
   setThresholds: (t: ThresholdProfile) => void;
@@ -427,7 +434,10 @@ export const useMonitorStore = create<MonitorState>()(
           relayCaregiver(buildMorningMessage(summary), summary);
           // Watermark advances only after the notification went out — a
           // failed alert must not mark the night as reported.
-          set({ lastReportedAt: reportEnd });
+          set({
+            lastReportedAt: reportEnd,
+            lastMorningReport: { text: summary, at: reportEnd },
+          });
         } catch (e) {
           console.warn('morning report failed', e);
         }
@@ -522,6 +532,7 @@ export const useMonitorStore = create<MonitorState>()(
         telegramChatId: null,
         whatsappNumber: null,
         pendingWhatsappMessage: null,
+        lastMorningReport: null,
 
         startMock: async (scenario) => {
           await beginSession();
@@ -536,6 +547,10 @@ export const useMonitorStore = create<MonitorState>()(
           if (sensor instanceof MockHeartRateSensor) {
             sensor.setScenario(scenario);
           }
+        },
+
+        rememberBleDevice: (ref) => {
+          set({ bleDevice: ref });
         },
 
         startBle: async (deviceId) => {
@@ -715,6 +730,7 @@ export const useMonitorStore = create<MonitorState>()(
         backupFolderUri: s.backupFolderUri,
         backupNagDismissed: s.backupNagDismissed,
         ecgAutoMode: s.ecgAutoMode,
+        lastMorningReport: s.lastMorningReport,
       }),
     },
   ),

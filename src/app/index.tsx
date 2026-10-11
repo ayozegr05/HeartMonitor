@@ -1,12 +1,7 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import {
-  Animated,
-  FlatList,
-  Modal,
-  Pressable,
-  StyleSheet,
-} from 'react-native';
+import { Animated, Pressable, ScrollView, StyleSheet } from 'react-native';
 import {
     SafeAreaView,
     useSafeAreaInsets,
@@ -23,10 +18,6 @@ import { activeLowThreshold } from '@/domain/thresholds';
 import { openWhatsappAlert } from '@/features/caregiver/whatsapp';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { useTheme } from '@/hooks/use-theme';
-import {
-    requestBlePermissions,
-    scanForHeartRateSensors,
-} from '@/sensors/BleHeartRateSensor';
 import { getBleManager } from '@/sensors/bleManager';
 import {
     MOCK_SCENARIO_LABELS,
@@ -35,7 +26,6 @@ import {
 import type { IEcgSource } from '@/sensors/ecg';
 import { MockEcgSensor } from '@/sensors/polar/MockEcgSensor';
 import { PolarEcgSource } from '@/sensors/polar/PolarEcgSource';
-import type { ScannedSensor } from '@/sensors/types';
 
 const STATE_LABELS: Record<string, string> = {
   idle: 'Inactivo',
@@ -46,8 +36,16 @@ const STATE_LABELS: Record<string, string> = {
   error: 'Error',
 };
 
+type MonitorTab = 'fc' | 'ecg' | 'mock';
+const TABS: { key: MonitorTab; label: string }[] = [
+  { key: 'fc', label: 'FC' },
+  { key: 'ecg', label: 'ECG' },
+  { key: 'mock', label: 'Simulador' },
+];
+
 export default function MonitorScreen() {
   const theme = useTheme();
+  const router = useRouter();
   const {
     connectionState,
     currentReading,
@@ -72,6 +70,9 @@ export default function MonitorScreen() {
 
   const streaming = connectionState === 'streaming';
   const insets = useSafeAreaInsets();
+  const [tab, setTab] = useState<MonitorTab>('fc');
+  const [scenario, setScenario] = useState<MockScenario>('normal');
+  const [error, setError] = useState<string | null>(null);
 
   // Honest readout: a link that delivers nothing for a while is not
   // 'monitoring'. Tick only while streaming so the check re-renders.
@@ -141,60 +142,12 @@ export default function MonitorScreen() {
       };
     }
   }, [streaming]);
-  const [mode, setMode] = useState<'mock' | 'ble'>('mock');
-  const [scenario, setScenario] = useState<MockScenario>('normal');
-  const [ecgOpen, setEcgOpen] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [devices, setDevices] = useState<ScannedSensor[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [btPoweredOn, setBtPoweredOn] = useState(true);
 
-  useEffect(() => {
-    if (mode !== 'ble') return;
-    const sub = getBleManager().onStateChange(
-      (state) => setBtPoweredOn(state === 'PoweredOn'),
-      true,
-    );
-    return () => sub.remove();
-  }, [mode]);
-
-  const startScan = async () => {
-    setError(null);
-    if ((await getBleManager().state()) !== 'PoweredOn') {
-      setError('Bluetooth apagado — enciéndelo para buscar sensores');
-      return;
-    }
-    const granted = await requestBlePermissions();
-    if (!granted) {
-      setError('Permisos de Bluetooth denegados');
-      return;
-    }
-    setDevices([]);
-    setScanning(true);
-    scanForHeartRateSensors(
-      getBleManager(),
-      (d) => setDevices((prev) => [...prev, d]),
-      10_000,
-    );
-    setTimeout(() => setScanning(false), 10_000);
-  };
-
-  const connectTo = async (device: ScannedSensor) => {
-    setError(null);
-    if ((await getBleManager().state()) !== 'PoweredOn') {
-      setError('Bluetooth apagado — enciéndelo para conectar');
-      return;
-    }
-    try {
-      await startBle(device.id);
-    } catch {
-      setError(`No se pudo conectar a ${device.name}`);
-    }
-  };
+  const isPolar = !!bleDevice && /polar|h10/i.test(bleDevice.label);
 
   /** ECG source: the real Polar PMD stream on the strap, else the mock. */
   const makeEcgSource = (): IEcgSource => {
-    if (bleDevice && /polar|h10/i.test(bleDevice.label)) {
+    if (isPolar && bleDevice) {
       return new PolarEcgSource(
         () => getBleManager().connectToDevice(bleDevice.id),
         `ECG ${bleDevice.label}`,
@@ -203,276 +156,245 @@ export default function MonitorScreen() {
     return new MockEcgSensor();
   };
 
+  const onStart = async () => {
+    setError(null);
+    try {
+      if (tab === 'mock') {
+        await startMock(scenario);
+      } else if (bleDevice) {
+        await startBle(bleDevice.id);
+      }
+    } catch {
+      setError('No se pudo iniciar la monitorización');
+    }
+  };
+
   return (
-    <ThemedView
-      style={[styles.container, { paddingTop: insets.top }]}>
-
+    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-        {/* Big live BPM readout */}
-        <ThemedView style={styles.hero}>
-          <ThemedText type="small" themeColor="textSecondary">
-            {staleData
-              ? currentReading
-                ? 'Sin datos nuevos — revisa el reloj'
-                : 'Conectado — esperando FC'
-              : STATE_LABELS[connectionState]}
-            {connectionState === 'reconnecting' && reconnectAttempt > 0
-              ? ` (intento ${reconnectAttempt})`
-              : ''}
-            {sensorLabel ? ` · ${sensorLabel}` : ''}
-          </ThemedText>
-          <Animated.Text
-            style={[styles.heart, { transform: [{ scale: pulse }] }]}>
-            ❤️
-          </Animated.Text>
-          <ThemedText
-            style={[
-              styles.bpm,
-              { color: belowThreshold ? '#E5484D' : theme.text },
-            ]}>
-            {currentReading ? currentReading.bpm : '--'}
-            {streaming && currentReading ? (
-              <ThemedText style={styles.trend}> {trendGlyph}</ThemedText>
-            ) : null}
-          </ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            bpm · umbral {activeThreshold} · eventos: {eventCount}
-          </ThemedText>
-          {streaming && sessionStartedAt && (
-            <ThemedText type="small" themeColor="textSecondary">
-              {formatDuration(now - sessionStartedAt)} monitorizando
-              {sessionMinBpm !== null && sessionMaxBpm !== null
-                ? ` · mín ${sessionMinBpm} · máx ${sessionMaxBpm}`
-                : ''}
-            </ThemedText>
-          )}
-        </ThemedView>
-
-        {liveBuckets.length > 1 && (
-          <ThemedView style={styles.sparkline}>
-            <HrChart
-              buckets={liveBuckets}
-              thresholdBpm={activeThreshold}
-              height={56}
-              compact
-            />
-          </ThemedView>
-        )}
-
-        {lastEvent && (
-          <ThemedView type="backgroundElement" style={styles.alertBox}>
-            <ThemedText type="smallBold">
-              {lastEvent.type === 'bradycardia'
-                ? `Bradicardia: ${lastEvent.bpm} bpm`
-                : `Pausa: ${lastEvent.rrIntervalMs} ms`}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              {new Date(lastEvent.timestamp).toLocaleTimeString()}
-            </ThemedText>
-          </ThemedView>
-        )}
-
-        {pendingWhatsappMessage !== null && whatsappNumber !== null && (
-          <Pressable
-            onPress={() => {
-              void openWhatsappAlert(
-                whatsappNumber,
-                pendingWhatsappMessage,
-              );
-              clearPendingWhatsapp();
-            }}
-            onLongPress={clearPendingWhatsapp}
-            style={[
-              styles.alertBox,
-              { backgroundColor: '#1F7A46', alignSelf: 'stretch' },
-            ]}>
-            <ThemedText type="smallBold" style={{ color: '#fff' }}>
-              📤 Aviso pendiente — enviar por WhatsApp
-            </ThemedText>
-            <ThemedText type="small" style={{ color: '#d7f0e0' }}>
-              Un toque abre el chat con el aviso ya escrito. Mantén para
-              descartar.
-            </ThemedText>
-          </Pressable>
-        )}
-
-        {/* Source picker */}
+        {/* Mode switcher: FC monitor / ECG / Simulator */}
         <ThemedView style={styles.row}>
-          {(['mock', 'ble'] as const).map((m) => (
+          {TABS.map((t) => (
             <Pressable
-              key={m}
-              onPress={() => setMode(m)}
+              key={t.key}
+              onPress={() => setTab(t.key)}
               style={[
                 styles.chip,
                 { backgroundColor: theme.backgroundElement },
-                mode === m && { backgroundColor: theme.backgroundSelected },
+                tab === t.key && {
+                  backgroundColor: theme.backgroundSelected,
+                },
               ]}>
-              <ThemedText type="small">
-                {m === 'mock' ? 'Simulador' : 'Bluetooth'}
-              </ThemedText>
+              <ThemedText type="small">{t.label}</ThemedText>
             </Pressable>
           ))}
-          <Pressable
-            onPress={() => setEcgOpen(true)}
-            style={[
-              styles.chip,
-              { backgroundColor: theme.backgroundElement },
-            ]}>
-            <ThemedText type="small">ECG</ThemedText>
-          </Pressable>
         </ThemedView>
 
-        {mode === 'mock' ? (
-          <>
-            <ThemedView style={styles.row}>
-              {(Object.keys(MOCK_SCENARIO_LABELS) as MockScenario[]).map((s) => (
-                <Pressable
-                  key={s}
-                  onPress={() => {
-                    setScenario(s);
-                    setMockScenario(s);
-                  }}
-                  style={[
-                    styles.chip,
-                    { backgroundColor: theme.backgroundElement },
-                    scenario === s && {
-                      backgroundColor: theme.backgroundSelected,
-                    },
-                  ]}>
-                  <ThemedText type="small">
-                    {MOCK_SCENARIO_LABELS[s].split(' ')[0]}
-                  </ThemedText>
-                </Pressable>
-              ))}
-            </ThemedView>
-            <ThemedText
-              type="small"
-              themeColor="textSecondary"
-              style={styles.hint}>
-              {MOCK_SCENARIO_LABELS[scenario]} — el simulador finge ese
-              ritmo para probar las alertas sin reloj
-            </ThemedText>
-          </>
-        ) : (
-          <>
-            {!btPoweredOn && (
-              <ThemedView type="backgroundElement" style={styles.alertBox}>
-                <ThemedText type="smallBold">Bluetooth apagado</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  Enciéndelo para buscar o reconectar sensores
-                </ThemedText>
-              </ThemedView>
-            )}
-            {(streaming ||
-              connectionState === 'connecting' ||
-              connectionState === 'reconnecting') &&
-            bleDevice ? (
-              <ThemedView type="backgroundElement" style={styles.alertBox}>
-                <ThemedText type="smallBold">
-                  {connectionState === 'reconnecting'
-                    ? `Reconectando a ${bleDevice.label}…`
-                    : `✓ ${bleDevice.label} conectado`}
-                </ThemedText>
-                {staleData && (
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Esperando datos — activa «Emitir FC» en el reloj
-                  </ThemedText>
-                )}
-              </ThemedView>
-            ) : null}
-            <Pressable
-              onPress={startScan}
-              style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
-              <ThemedText type="smallBold">
-                {scanning
-                  ? 'Buscando…'
-                  : streaming
-                    ? 'Buscar otros sensores'
-                    : 'Buscar sensores BLE'}
-              </ThemedText>
-            </Pressable>
-            {bleDevice && !streaming && connectionState !== 'reconnecting' && (
-              <Pressable
-                onPress={() => connectTo({ id: bleDevice.id, name: bleDevice.label })}
-                style={[styles.button, { backgroundColor: theme.backgroundSelected }]}>
-                <ThemedText type="smallBold">
-                  Reconectar a {bleDevice.label}
-                </ThemedText>
-              </Pressable>
-            )}
-            <FlatList
-              data={devices}
-              keyExtractor={(d) => d.id}
-              style={styles.deviceList}
-              renderItem={({ item }) => (
-                <Pressable
-                  onPress={() => connectTo(item)}
-                  style={[
-                    styles.deviceRow,
-                    { backgroundColor: theme.backgroundElement },
-                  ]}>
-                  <ThemedText type="small">{item.name}</ThemedText>
-                </Pressable>
-              )}
-            />
-          </>
-        )}
-
-        {error && (
-          <ThemedText type="small" themeColor="textSecondary">
-            {error}
-          </ThemedText>
-        )}
-
-        <ThemedView style={styles.spacer} />
-
-        <Modal
-          visible={ecgOpen}
-          animationType="slide"
-          onRequestClose={() => setEcgOpen(false)}>
-          <ThemedView
-            style={[
-              styles.ecgModal,
-              { paddingTop: insets.top + Spacing.three },
-            ]}>
+        {tab === 'ecg' ? (
+          <ScrollView
+            style={styles.ecgScroll}
+            contentContainerStyle={styles.ecgScrollContent}>
             <EcgPanel
               createSource={makeEcgSource}
-              isMock={!(bleDevice && /polar|h10/i.test(bleDevice.label))}
+              isMock={!isPolar}
               liveStatus={
                 streaming
                   ? `❤️ ${currentReading ? currentReading.bpm : '—'} bpm · monitorizando`
                   : 'monitor parado'
               }
-              title={
-                bleDevice && /polar|h10/i.test(bleDevice.label)
-                  ? `ECG — ${bleDevice.label}`
-                  : 'ECG — simulado'
-              }
+              title={isPolar ? `ECG — ${bleDevice?.label}` : 'ECG — simulado'}
             />
-            <Pressable
-              onPress={() => setEcgOpen(false)}
-              style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
-              <ThemedText type="smallBold">Cerrar</ThemedText>
-            </Pressable>
-          </ThemedView>
-        </Modal>
+          </ScrollView>
+        ) : (
+          <>
+            {/* Big live BPM readout */}
+            <ThemedView style={styles.hero}>
+              <ThemedText type="small" themeColor="textSecondary">
+                {staleData
+                  ? currentReading
+                    ? 'Sin datos nuevos — revisa el reloj'
+                    : 'Conectado — esperando FC'
+                  : STATE_LABELS[connectionState]}
+                {connectionState === 'reconnecting' && reconnectAttempt > 0
+                  ? ` (intento ${reconnectAttempt})`
+                  : ''}
+                {sensorLabel ? ` · ${sensorLabel}` : ''}
+              </ThemedText>
+              <Animated.Text
+                style={[styles.heart, { transform: [{ scale: pulse }] }]}>
+                ❤️
+              </Animated.Text>
+              <ThemedText
+                style={[
+                  styles.bpm,
+                  { color: belowThreshold ? '#E5484D' : theme.text },
+                ]}>
+                {currentReading ? currentReading.bpm : '--'}
+                {streaming && currentReading ? (
+                  <ThemedText style={styles.trend}> {trendGlyph}</ThemedText>
+                ) : null}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                bpm · umbral {activeThreshold} · eventos: {eventCount}
+              </ThemedText>
+              {streaming && sessionStartedAt && (
+                <ThemedText type="small" themeColor="textSecondary">
+                  {formatDuration(now - sessionStartedAt)} monitorizando
+                  {sessionMinBpm !== null && sessionMaxBpm !== null
+                    ? ` · mín ${sessionMinBpm} · máx ${sessionMaxBpm}`
+                    : ''}
+                </ThemedText>
+              )}
+            </ThemedView>
 
-        <Pressable
-          onPress={() =>
-            streaming ? stop() : mode === 'mock' ? startMock(scenario) : undefined
-          }
-          style={[
-            styles.primaryButton,
-            { backgroundColor: streaming ? '#B3261E' : '#2E7D32' },
-          ]}>
-          <ThemedText type="smallBold" style={styles.primaryButtonText}>
-            {streaming
-              ? 'Detener'
-              : mode === 'mock'
-                ? 'Iniciar simulación'
-                : 'Selecciona un sensor'}
-          </ThemedText>
-        </Pressable>
+            {liveBuckets.length > 1 && (
+              <ThemedView style={styles.sparkline}>
+                <HrChart
+                  buckets={liveBuckets}
+                  thresholdBpm={activeThreshold}
+                  height={56}
+                  compact
+                />
+              </ThemedView>
+            )}
+
+            {lastEvent && (
+              <ThemedView type="backgroundElement" style={styles.alertBox}>
+                <ThemedText type="smallBold">
+                  {lastEvent.type === 'bradycardia'
+                    ? `Bradicardia: ${lastEvent.bpm} bpm`
+                    : `Pausa: ${lastEvent.rrIntervalMs} ms`}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {new Date(lastEvent.timestamp).toLocaleTimeString()}
+                </ThemedText>
+              </ThemedView>
+            )}
+
+            {pendingWhatsappMessage !== null && whatsappNumber !== null && (
+              <Pressable
+                onPress={() => {
+                  void openWhatsappAlert(
+                    whatsappNumber,
+                    pendingWhatsappMessage,
+                  );
+                  clearPendingWhatsapp();
+                }}
+                onLongPress={clearPendingWhatsapp}
+                style={[
+                  styles.alertBox,
+                  { backgroundColor: '#1F7A46', alignSelf: 'stretch' },
+                ]}>
+                <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                  📤 Aviso pendiente — enviar por WhatsApp
+                </ThemedText>
+                <ThemedText type="small" style={{ color: '#d7f0e0' }}>
+                  Un toque abre el chat con el aviso ya escrito. Mantén para
+                  descartar.
+                </ThemedText>
+              </Pressable>
+            )}
+
+            {tab === 'fc' ? (
+              <>
+                {connectionState === 'reconnecting' && bleDevice && (
+                  <ThemedView
+                    type="backgroundElement"
+                    style={styles.alertBox}>
+                    <ThemedText type="smallBold">
+                      Reconectando a {bleDevice.label}…
+                    </ThemedText>
+                  </ThemedView>
+                )}
+                {!streaming && !bleDevice && (
+                  <ThemedView
+                    type="backgroundElement"
+                    style={styles.alertBox}>
+                    <ThemedText type="smallBold">Sin banda elegida</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Busca tu Polar H10 desde Ajustes → Conectividad
+                    </ThemedText>
+                    <Pressable
+                      onPress={() => router.push('/settings')}
+                      style={[
+                        styles.button,
+                        { backgroundColor: theme.backgroundSelected },
+                      ]}>
+                      <ThemedText type="smallBold">
+                        Ir a Conectividad
+                      </ThemedText>
+                    </Pressable>
+                  </ThemedView>
+                )}
+              </>
+            ) : (
+              <>
+                <ThemedView style={styles.row}>
+                  {(Object.keys(MOCK_SCENARIO_LABELS) as MockScenario[]).map(
+                    (s) => (
+                      <Pressable
+                        key={s}
+                        onPress={() => {
+                          setScenario(s);
+                          setMockScenario(s);
+                        }}
+                        style={[
+                          styles.chip,
+                          { backgroundColor: theme.backgroundElement },
+                          scenario === s && {
+                            backgroundColor: theme.backgroundSelected,
+                          },
+                        ]}>
+                        <ThemedText type="small">
+                          {MOCK_SCENARIO_LABELS[s].split(' ')[0]}
+                        </ThemedText>
+                      </Pressable>
+                    ),
+                  )}
+                </ThemedView>
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  style={styles.hint}>
+                  {MOCK_SCENARIO_LABELS[scenario]} — el simulador finge ese
+                  ritmo para probar las alertas sin banda
+                </ThemedText>
+              </>
+            )}
+
+            {error && (
+              <ThemedText type="small" themeColor="textSecondary">
+                {error}
+              </ThemedText>
+            )}
+
+            <ThemedView style={styles.spacer} />
+
+            <Pressable
+              onPress={() => (streaming ? stop() : onStart())}
+              disabled={!streaming && tab !== 'mock' && !bleDevice}
+              style={[
+                styles.primaryButton,
+                {
+                  backgroundColor: streaming
+                    ? '#B3261E'
+                    : !bleDevice && tab !== 'mock'
+                      ? theme.backgroundElement
+                      : '#2E7D32',
+                },
+              ]}>
+              <ThemedText type="smallBold" style={styles.primaryButtonText}>
+                {streaming
+                  ? 'Detener'
+                  : tab === 'mock'
+                    ? 'Iniciar simulación'
+                    : bleDevice
+                      ? `Iniciar con ${bleDevice.label}`
+                      : 'Elige una banda en Ajustes'}
+              </ThemedText>
+            </Pressable>
+          </>
+        )}
       </SafeAreaView>
     </ThemedView>
   );
@@ -518,19 +440,11 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,
+    alignSelf: 'center',
   },
-  deviceList: { alignSelf: 'stretch', maxHeight: 160 },
+  ecgScroll: { alignSelf: 'stretch', flex: 1 },
+  ecgScrollContent: { gap: Spacing.two },
   hint: { textAlign: 'center' },
-  deviceRow: {
-    borderRadius: Spacing.two,
-    padding: Spacing.three,
-    marginBottom: Spacing.two,
-  },
-  ecgModal: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.three,
-  },
   primaryButton: {
     alignSelf: 'stretch',
     borderRadius: Spacing.three,

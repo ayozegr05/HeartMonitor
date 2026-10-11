@@ -1,9 +1,8 @@
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, FlatList, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { EcgStrip } from '@/components/ecg-strip';
 import { HrChart } from '@/components/hr-chart';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -20,7 +19,6 @@ import {
     buildWeeklyReport,
     type WeeklyReport,
 } from '@/domain/weeklyReport';
-import { shareStripCsv, shareStripPdf } from '@/features/ecg/exportStrip';
 import {
   listEcgSessions,
   removeEcgSession,
@@ -482,78 +480,66 @@ function WeeklyCard({ weekly }: { weekly: WeeklyReport }) {
   );
 }
 
-function StripsCard({
-  strips,
-  onOpen,
-  onDelete,
-}: {
-  strips: CapturedStrip[];
-  onOpen: (s: CapturedStrip) => void;
-  onDelete: (s: CapturedStrip) => void;
-}) {
-  return (
-    <ThemedView type="backgroundElement" style={styles.card}>
-      <ThemedView style={styles.cardHeader}>
-        <ThemedText type="smallBold" style={styles.cardTitle}>
-          Tiras ECG sueltas
-        </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {strips.length} tira{strips.length === 1 ? '' : 's'} de 30 s sin sesión asociada · toca para ver
-        </ThemedText>
-      </ThemedView>
-      {strips.map((s) => (
-        <StripRow key={s.timestamp} s={s} onOpen={onOpen} onDelete={onDelete} />
-      ))}
-      <ThemedText type="small" themeColor="textSecondary">
-        Mantén pulsada una tira para borrarla.
-      </ThemedText>
-    </ThemedView>
-  );
+type ReportsTab = 'resumen' | 'fc' | 'ecg';
+const REPORT_TABS: { key: ReportsTab; label: string }[] = [
+  { key: 'resumen', label: 'Resumen' },
+  { key: 'fc', label: 'FC' },
+  { key: 'ecg', label: 'ECG' },
+];
+
+/** Monday-starting week key for session grouping. */
+function weekLabel(ts: number): string {
+  const d = new Date(ts);
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return `Semana del ${monday.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+  })}`;
 }
 
-function SessionsCard({
-  sessions,
-  onExport,
-  onDelete,
-}: {
-  sessions: EcgSessionInfo[];
-  onExport: (s: EcgSessionInfo) => void;
-  onDelete: (s: EcgSessionInfo) => void;
-}) {
-  return (
-    <ThemedView type="backgroundElement" style={styles.card}>
-      <ThemedView style={styles.cardHeader}>
-        <ThemedText type="smallBold" style={styles.cardTitle}>
-          Grabaciones ECG sueltas
-        </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          stream completo · toca para exportar CSV entero
-        </ThemedText>
-      </ThemedView>
-      {sessions.map((s) => (
-        <EcgSessionRow
-          key={s.startedAt}
-          s={s}
-          onExport={onExport}
-          onDelete={onDelete}
-        />
-      ))}
-      <ThemedText type="small" themeColor="textSecondary">
-        Mantén pulsada una sesión para borrarla.
-      </ThemedText>
-    </ThemedView>
-  );
+/** Local-day label for ECG strip grouping. */
+function stripDayLabel(ts: number): string {
+  return new Date(ts).toLocaleDateString(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
 }
+
+type EcgFilter = 'all' | 'auto' | 'manual' | 'recordings';
+const ECG_FILTERS: { key: EcgFilter; label: string }[] = [
+  { key: 'all', label: 'Todo' },
+  { key: 'auto', label: 'Auto 30 s' },
+  { key: 'manual', label: 'Manuales' },
+  { key: 'recordings', label: 'Grabaciones' },
+];
+
+/** Flattened row for the FC tab: week headers interleaved with cards. */
+type FcRow =
+  | { kind: 'week'; key: string; label: string; count: number }
+  | { kind: 'session'; key: string; item: SessionWithReport };
+
+type EcgRow =
+  | { kind: 'day'; key: string; label: string }
+  | { kind: 'strip'; key: string; strip: CapturedStrip }
+  | { kind: 'recording'; key: string; session: EcgSessionInfo };
 
 export default function ReportsScreen() {
   const theme = useTheme();
+  const router = useRouter();
   const thresholds = useMonitorStore((s) => s.thresholds);
+  const lastMorningReport = useMonitorStore((s) => s.lastMorningReport);
+  const [tab, setTab] = useState<ReportsTab>('resumen');
   const [items, setItems] = useState<SessionWithReport[]>([]);
   const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
   const [onlyWithEvents, setOnlyWithEvents] = useState(false);
   const [strips, setStrips] = useState<CapturedStrip[]>([]);
   const [sessions, setSessions] = useState<EcgSessionInfo[]>([]);
-  const [activeStrip, setActiveStrip] = useState<CapturedStrip | null>(null);
+  const [ecgFilter, setEcgFilter] = useState<EcgFilter>('all');
+  const [collapsedWeeks, setCollapsedWeeks] = useState<Set<string>>(
+    () => new Set(),
+  );
   /** 'Now' at the last data load — window ends for live sessions. */
   const [nowMs, setNowMs] = useState(0);
   const hasAnyEvents = items.some((i) => i.report.eventCount > 0);
@@ -571,12 +557,6 @@ export default function ReportsScreen() {
       item.session.startedAt;
   const ecgSessionsOf = (item: SessionWithReport): EcgSessionInfo[] =>
     sessions.filter((s) => recOverlaps(s, item));
-  const orphanStrips = strips.filter(
-    (s) => !items.some((i) => inWindow(s.timestamp, i)),
-  );
-  const orphanSessions = sessions.filter(
-    (s) => !items.some((i) => recOverlaps(s, i)),
-  );
 
   useFocusEffect(
     useCallback(() => {
@@ -604,206 +584,287 @@ export default function ReportsScreen() {
     }, [thresholds]),
   );
 
+  const openStrip = (s: CapturedStrip) =>
+    router.push({
+      pathname: '/strip-detail',
+      params: { ts: String(s.timestamp) },
+    });
+
+  const deleteStrip = (s: CapturedStrip) => {
+    removeStrip(s.timestamp);
+    setStrips((prev) => prev.filter((x) => x.timestamp !== s.timestamp));
+  };
+  const exportSession = (s: EcgSessionInfo) => {
+    shareEcgSessionCsv(s).catch((e) =>
+      Alert.alert(
+        'No se pudo exportar',
+        e instanceof Error ? e.message : 'Error desconocido',
+      ),
+    );
+  };
+  const deleteSessionRec = (s: EcgSessionInfo) => {
+    removeEcgSession(s.startedAt);
+    setSessions((prev) => prev.filter((x) => x.startedAt !== s.startedAt));
+  };
+
+  // FC tab: session cards flattened under collapsible week headers.
+  const fcRows = ((): FcRow[] => {
+    const rows: FcRow[] = [];
+    let week: string | null = null;
+    const visible = onlyWithEvents
+      ? items.filter((i) => i.report.eventCount > 0)
+      : items;
+    for (const item of visible) {
+      const w = weekLabel(item.session.startedAt);
+      if (w !== week) {
+        week = w;
+        const count = visible.filter(
+          (i) => weekLabel(i.session.startedAt) === w,
+        ).length;
+        rows.push({ kind: 'week', key: `w-${w}`, label: w, count });
+      }
+      if (!collapsedWeeks.has(w)) {
+        rows.push({
+          kind: 'session',
+          key: String(item.session.id),
+          item,
+        });
+      }
+    }
+    return rows;
+  })();
+
+  // ECG tab: strips grouped by day, recordings at the end.
+  const ecgRows = ((): EcgRow[] => {
+    const rows: EcgRow[] = [];
+    if (ecgFilter !== 'recordings') {
+      const shown = strips.filter((s) =>
+        ecgFilter === 'all'
+          ? true
+          : ecgFilter === 'auto'
+            ? !!s.auto
+            : !s.auto,
+      );
+      let day: string | null = null;
+      for (const s of shown) {
+        const d = stripDayLabel(s.timestamp);
+        if (d !== day) {
+          day = d;
+          rows.push({ kind: 'day', key: `d-${d}`, label: d });
+        }
+        rows.push({ kind: 'strip', key: `s-${s.timestamp}`, strip: s });
+      }
+    }
+    if (ecgFilter === 'all' || ecgFilter === 'recordings') {
+      if (sessions.length > 0) {
+        rows.push({
+          kind: 'day',
+          key: 'd-grabaciones',
+          label: 'Grabaciones completas',
+        });
+        for (const s of sessions) {
+          rows.push({ kind: 'recording', key: `r-${s.startedAt}`, session: s });
+        }
+      }
+    }
+    return rows;
+  })();
+
+  const toggleWeek = (label: string) =>
+    setCollapsedWeeks((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
         <ThemedText type="subtitle" style={styles.title}>
           Informes
         </ThemedText>
-        {/* Keep the toggle reachable while the filter is active, even if
-            the loaded sessions happen to contain no events right now. */}
-        {(hasAnyEvents || onlyWithEvents) && (
-          <Pressable
-            onPress={() => setOnlyWithEvents((v) => !v)}
-            style={[
-              styles.filterChip,
-              {
-                backgroundColor: onlyWithEvents
-                  ? theme.backgroundSelected
-                  : theme.backgroundElement,
-              },
-            ]}>
-            <ThemedText type="small">⚠️ Solo con eventos</ThemedText>
-          </Pressable>
-        )}
-        <FlatList
-          ListHeaderComponent={
-            <>
-              {weekly && weekly.sessionsCount > 0 && !onlyWithEvents && (
-                <WeeklyCard weekly={weekly} />
-              )}
-            </>
-          }
-          ListFooterComponent={
-            !onlyWithEvents ? (
+
+        {/* Section switcher */}
+        <View style={styles.tabRow}>
+          {REPORT_TABS.map((t) => (
+            <Pressable
+              key={t.key}
+              onPress={() => setTab(t.key)}
+              style={[
+                styles.chip,
+                { backgroundColor: theme.backgroundElement },
+                tab === t.key && {
+                  backgroundColor: theme.backgroundSelected,
+                },
+              ]}>
+              <ThemedText type="small">{t.label}</ThemedText>
+            </Pressable>
+          ))}
+        </View>
+
+        {tab === 'resumen' && (
+          <FlatList
+            data={[]}
+            renderItem={null}
+            ListHeaderComponent={
               <>
-                {orphanSessions.length > 0 && (
-                  <SessionsCard
-                    sessions={orphanSessions}
-                    onExport={(s) => {
-                      shareEcgSessionCsv(s).catch((e) =>
-                        Alert.alert(
-                          'No se pudo exportar',
-                          e instanceof Error ? e.message : 'Error desconocido',
-                        ),
-                      );
-                    }}
-                    onDelete={(s) => {
-                      removeEcgSession(s.startedAt);
-                      setSessions((prev) =>
-                        prev.filter((x) => x.startedAt !== s.startedAt),
-                      );
-                    }}
-                  />
+                {/* Morning report — tap to read the night's verdict */}
+                <ThemedView type="backgroundElement" style={styles.card}>
+                  <ThemedView style={styles.cardHeader}>
+                    <ThemedText type="smallBold" style={styles.cardTitle}>
+                      🌅 Informe de la noche
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {lastMorningReport
+                        ? new Date(lastMorningReport.at).toLocaleString(
+                            undefined,
+                            { day: 'numeric', month: 'short' },
+                          )
+                        : 'aún no emitido'}
+                    </ThemedText>
+                  </ThemedView>
+                  {lastMorningReport ? (
+                    <ThemedText type="small">
+                      {lastMorningReport.text}
+                    </ThemedText>
+                  ) : (
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Se genera al despertar tras una noche monitorizada —
+                      también llega como notificación.
+                    </ThemedText>
+                  )}
+                </ThemedView>
+
+                {weekly && weekly.sessionsCount > 0 && (
+                  <WeeklyCard weekly={weekly} />
                 )}
-                {orphanStrips.length > 0 && (
-                  <StripsCard
-                    strips={orphanStrips}
-                    onOpen={setActiveStrip}
-                    onDelete={(s) => {
-                      removeStrip(s.timestamp);
-                      setStrips((prev) =>
-                        prev.filter((x) => x.timestamp !== s.timestamp),
-                      );
-                    }}
-                  />
+                {!weekly && (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Sin datos semanales todavía — monitoriza una noche para
+                    generar el primer resumen.
+                  </ThemedText>
                 )}
               </>
-            ) : null
-          }
-          data={
-            onlyWithEvents
-              ? items.filter((i) => i.report.eventCount > 0)
-              : items
-          }
-          keyExtractor={(i) => String(i.session.id)}
-          contentContainerStyle={{ paddingBottom: BottomTabInset }}
-          ListEmptyComponent={
-            <ThemedText type="small" themeColor="textSecondary">
-              {onlyWithEvents && items.length > 0
-                ? 'Ninguna sesión con eventos.'
-                : 'Aún no hay sesiones. El informe aparece al terminar de monitorizar.'}
-            </ThemedText>
-          }
-          renderItem={({ item }) => (
-            <ReportCard
-              item={item}
-              thresholds={thresholds}
-              strips={stripsOf(item)}
-              ecgSessions={ecgSessionsOf(item)}
-              onOpenStrip={setActiveStrip}
-              onDeleteStrip={(s) => {
-                removeStrip(s.timestamp);
-                setStrips((prev) =>
-                  prev.filter((x) => x.timestamp !== s.timestamp),
-                );
-              }}
-              onExportSession={(s) => {
-                shareEcgSessionCsv(s).catch((e) =>
-                  Alert.alert(
-                    'No se pudo exportar',
-                    e instanceof Error ? e.message : 'Error desconocido',
-                  ),
-                );
-              }}
-              onDeleteSession={(s) => {
-                removeEcgSession(s.startedAt);
-                setSessions((prev) =>
-                  prev.filter((x) => x.startedAt !== s.startedAt),
-                );
-              }}
-            />
-          )}
-        />
-        <Modal
-          visible={activeStrip !== null}
-          animationType="slide"
-          onRequestClose={() => setActiveStrip(null)}>
-          <ThemedView style={styles.stripModal}>
-            <SafeAreaView style={styles.stripModalInner}>
-              <ThemedText type="smallBold">Tira ECG · 30 s</ThemedText>
-              {activeStrip && (
-                <>
-                  <EcgStrip samples={activeStrip.samples} height={240} />
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {new Date(activeStrip.timestamp).toLocaleString(undefined, {
-                      day: 'numeric',
-                      month: 'short',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                    {' · '}
-                    {activeStrip.label !== undefined &&
-                      `${activeStrip.label} · `}
-                    {activeStrip.report.meanBpm} bpm · QRS{' '}
-                    {Math.round(activeStrip.report.meanQrsWidthMs)} ms
-                    {activeStrip.report.meanPrMs !== undefined &&
-                      ` · PR ${activeStrip.report.meanPrMs} ms`}
-                    {activeStrip.report.droppedBeats > 0 &&
-                      ` · ${activeStrip.report.droppedBeats} bloqueados`}
-                  </ThemedText>
-                  {activeStrip.report.flags.map((f) => (
-                    <ThemedText
-                      key={f}
-                      type="small"
-                      style={{ color: '#FFB020' }}>
-                      ⚠️ {f}
-                    </ThemedText>
-                  ))}
-                </>
-              )}
-              {activeStrip && (
-                <View style={styles.stripButtons}>
-                  <Pressable
-                    onPress={() =>
-                      shareStripPdf(activeStrip).catch((e) =>
-                        Alert.alert(
-                          'No se pudo exportar',
-                          e instanceof Error ? e.message : 'Error desconocido',
-                        ),
-                      )
-                    }
-                    style={[
-                      styles.exportButton,
-                      styles.stripButton,
-                      { backgroundColor: theme.backgroundSelected },
-                    ]}>
-                    <ThemedText type="smallBold">PDF</ThemedText>
-                  </Pressable>
-                  <Pressable
-                    onPress={() =>
-                      shareStripCsv(activeStrip).catch((e) =>
-                        Alert.alert(
-                          'No se pudo exportar',
-                          e instanceof Error ? e.message : 'Error desconocido',
-                        ),
-                      )
-                    }
-                    style={[
-                      styles.exportButton,
-                      styles.stripButton,
-                      { backgroundColor: theme.backgroundSelected },
-                    ]}>
-                    <ThemedText type="smallBold">CSV</ThemedText>
-                  </Pressable>
-                </View>
-              )}
+            }
+            contentContainerStyle={{ paddingBottom: BottomTabInset }}
+          />
+        )}
+
+        {tab === 'fc' && (
+          <>
+            {(hasAnyEvents || onlyWithEvents) && (
               <Pressable
-                onPress={() => setActiveStrip(null)}
+                onPress={() => setOnlyWithEvents((v) => !v)}
                 style={[
-                  styles.exportButton,
-                  { backgroundColor: theme.backgroundElement },
+                  styles.filterChip,
+                  {
+                    backgroundColor: onlyWithEvents
+                      ? theme.backgroundSelected
+                      : theme.backgroundElement,
+                  },
                 ]}>
-                <ThemedText type="smallBold">Cerrar</ThemedText>
+                <ThemedText type="small">⚠️ Solo con eventos</ThemedText>
               </Pressable>
-            </SafeAreaView>
-          </ThemedView>
-        </Modal>
+            )}
+            <FlatList
+              data={fcRows}
+              keyExtractor={(r) => r.key}
+              contentContainerStyle={{ paddingBottom: BottomTabInset }}
+              ListEmptyComponent={
+                <ThemedText type="small" themeColor="textSecondary">
+                  {onlyWithEvents && items.length > 0
+                    ? 'Ninguna sesión con eventos.'
+                    : 'Aún no hay sesiones. El informe aparece al terminar de monitorizar.'}
+                </ThemedText>
+              }
+              renderItem={({ item }) =>
+                item.kind === 'week' ? (
+                  <Pressable onPress={() => toggleWeek(item.label)}>
+                    <ThemedText type="smallBold" style={styles.weekHeader}>
+                      {collapsedWeeks.has(item.label) ? '▸' : '▾'}{' '}
+                      {item.label} · {item.count} sesión
+                      {item.count === 1 ? '' : 'es'}
+                    </ThemedText>
+                  </Pressable>
+                ) : (
+                  <ReportCard
+                    item={item.item}
+                    thresholds={thresholds}
+                    strips={stripsOf(item.item)}
+                    ecgSessions={ecgSessionsOf(item.item)}
+                    onOpenStrip={openStrip}
+                    onDeleteStrip={deleteStrip}
+                    onExportSession={exportSession}
+                    onDeleteSession={deleteSessionRec}
+                  />
+                )
+              }
+            />
+          </>
+        )}
+
+        {tab === 'ecg' && (
+          <>
+            <View style={styles.tabRow}>
+              {ECG_FILTERS.map((f) => (
+                <Pressable
+                  key={f.key}
+                  onPress={() => setEcgFilter(f.key)}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: theme.backgroundElement },
+                    ecgFilter === f.key && {
+                      backgroundColor: theme.backgroundSelected,
+                    },
+                  ]}>
+                  <ThemedText type="small">{f.label}</ThemedText>
+                </Pressable>
+              ))}
+            </View>
+            <FlatList
+              data={ecgRows}
+              keyExtractor={(r) => r.key}
+              contentContainerStyle={{ paddingBottom: BottomTabInset }}
+              ListEmptyComponent={
+                <ThemedText type="small" themeColor="textSecondary">
+                  Sin tiras ni grabaciones en esta categoría.
+                </ThemedText>
+              }
+              renderItem={({ item }) =>
+                item.kind === 'day' ? (
+                  <ThemedText
+                    type="smallBold"
+                    style={styles.weekHeader}>
+                    {item.label}
+                  </ThemedText>
+                ) : item.kind === 'strip' ? (
+                  <StripRow
+                    s={item.strip}
+                    onOpen={openStrip}
+                    onDelete={deleteStrip}
+                  />
+                ) : (
+                  <EcgSessionRow
+                    s={item.session}
+                    onExport={exportSession}
+                    onDelete={deleteSessionRec}
+                  />
+                )
+              }
+              ListFooterComponent={
+                <ThemedText type="small" themeColor="textSecondary">
+                  Toca una tira para ver la onda y su análisis · mantén para
+                  borrar · toca una grabación para exportar su CSV.
+                </ThemedText>
+              }
+            />
+          </>
+        )}
       </SafeAreaView>
     </ThemedView>
   );
 }
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1, paddingHorizontal: Spacing.four },
@@ -855,17 +916,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  stripModal: { flex: 1 },
-  stripModalInner: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.two,
-  },
-  stripButtons: { flexDirection: 'row', gap: Spacing.two },
-  stripButton: { flex: 1 },
-  metricRow: {
+  tabRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    gap: Spacing.two,
+    marginBottom: Spacing.two,
+  },
+  chip: {
+    borderRadius: Spacing.five,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  weekHeader: {
+    paddingVertical: Spacing.two,
+    textTransform: 'capitalize',
   },
 });

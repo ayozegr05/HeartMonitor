@@ -62,6 +62,15 @@ export async function getRecentEvents(limit = 50) {
     .limit(limit);
 }
 
+/** All events since a timestamp — the Eventos calendar needs a month window. */
+export async function getEventsSince(sinceTimestamp: number) {
+  return getDb()
+    .select()
+    .from(events)
+    .where(gte(events.timestamp, sinceTimestamp))
+    .orderBy(desc(events.timestamp));
+}
+
 export async function getReadingsSince(sinceTimestamp: number) {
   return getDb()
     .select()
