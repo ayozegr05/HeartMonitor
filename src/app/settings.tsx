@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ConnectivityCard } from '@/components/connectivity-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
@@ -450,6 +451,8 @@ export default function SettingsScreen() {
               </ThemedText>
             </Pressable>
           </ThemedView>
+
+          {Platform.OS === 'android' && <ConnectivityCard />}
 
           {Platform.OS === 'android' && <HealthConnectCard />}
 
