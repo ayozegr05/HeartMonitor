@@ -168,6 +168,9 @@ export default function MonitorScreen() {
   return (
     <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+        <ThemedText type="subtitle" style={styles.title}>
+          Monitor
+        </ThemedText>
         {/* Mode switcher: FC monitor / ECG / Simulator */}
         <ThemedView style={styles.row}>
           {TABS.map((t) => (
@@ -383,6 +386,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingBottom: BottomTabInset + Spacing.three,
     gap: Spacing.three,
+  },
+  title: {
+    paddingVertical: Spacing.three,
+    alignSelf: 'flex-start',
   },
   hero: {
     alignItems: 'center',
