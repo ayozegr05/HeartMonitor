@@ -14,9 +14,14 @@ import {
 } from 'react-native-safe-area-context';
 
 import { EcgStrip } from '@/components/ecg-strip';
+import { PatternInfoModal } from '@/components/pattern-info-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import {
+    patternForFlag,
+    type PatternInfo,
+} from '@/domain/patternInfo';
 import {
     shareStripCsv,
     shareStripPdf,
@@ -49,6 +54,7 @@ export default function StripDetailScreen() {
   const { ts } = useLocalSearchParams<{ ts: string }>();
   const [strip, setStrip] = useState<CapturedStrip | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [infoPattern, setInfoPattern] = useState<PatternInfo | null>(null);
 
   useEffect(() => {
     const wanted = Number(ts);
@@ -155,14 +161,27 @@ export default function StripDetailScreen() {
                     Sin patrones llamativos en esta tira.
                   </ThemedText>
                 ) : (
-                  strip.report.flags.map((f) => (
-                    <ThemedText
-                      key={f}
-                      type="small"
-                      style={{ color: '#FFB020' }}>
-                      ⚠️ {f}
-                    </ThemedText>
-                  ))
+                  strip.report.flags.map((f) => {
+                    const pat = patternForFlag(f);
+                    return (
+                      <Pressable
+                        key={f}
+                        disabled={!pat}
+                        onPress={() => setInfoPattern(pat)}
+                        style={styles.flagRow}>
+                        <ThemedText
+                          type="small"
+                          style={[{ color: '#FFB020' }, styles.flagText]}>
+                          ⚠️ {f}
+                        </ThemedText>
+                        {pat && (
+                          <ThemedText type="small" themeColor="textSecondary">
+                            ⓘ
+                          </ThemedText>
+                        )}
+                      </Pressable>
+                    );
+                  })
                 )}
                 <ThemedText type="small" themeColor="textSecondary">
                   Lectura orientativa — enseña la tira a tu cardiólogo para
@@ -205,6 +224,10 @@ export default function StripDetailScreen() {
             </>
           )}
         </ScrollView>
+        <PatternInfoModal
+          pattern={infoPattern}
+          onClose={() => setInfoPattern(null)}
+        />
       </SafeAreaView>
     </ThemedView>
   );
@@ -247,6 +270,12 @@ const styles = StyleSheet.create({
     minWidth: '28%',
     flexGrow: 1,
   },
+  flagRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.two,
+  },
+  flagText: { flex: 1 },
   buttons: { flexDirection: 'row', gap: Spacing.two },
   exportButton: {
     flex: 1,

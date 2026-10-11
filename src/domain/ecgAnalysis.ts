@@ -284,8 +284,21 @@ export function analyzeEcgStrip(
   }
 
   const flags: string[] = [];
-  if (n >= 3 && pFrac >= 0.7) {
-    flags.push('posible ausencia de onda P — enseña la tira a tu cardiólogo');
+  // Irregular rhythm + no P waves is the classic AF signature — emit the
+  // combined suspicion flag instead of the two generic ones.
+  const afSuspect =
+    rrs.length >= 4 && irr >= 0.15 && pFrac >= 0.7 && droppedBeats === 0;
+  if (afSuspect) {
+    flags.push(
+      'ritmo irregular sin ondas P — patrón compatible con fibrilación auricular, enseña la tira',
+    );
+  } else {
+    if (n >= 3 && pFrac >= 0.7) {
+      flags.push('posible ausencia de onda P — enseña la tira a tu cardiólogo');
+    }
+    if (rrs.length >= 4 && irr >= 0.15 && droppedBeats === 0) {
+      flags.push('ritmo irregular — posible arritmia, enseña la tira');
+    }
   }
   if (n >= 3 && meanQrs >= 120) {
     flags.push('QRS ancho (>120 ms) — enseña la tira a tu cardiólogo');
@@ -314,9 +327,6 @@ export function analyzeEcgStrip(
     flags.push(
       'pausas sin onda P — probable pausa sinusal (frecuente dormido), enseña la tira',
     );
-  }
-  if (rrs.length >= 4 && irr >= 0.15 && droppedBeats === 0) {
-    flags.push('ritmo irregular — posible arritmia, enseña la tira');
   }
 
   return {

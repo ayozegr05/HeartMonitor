@@ -27,6 +27,11 @@ export default function AppTabs() {
         <NativeTabs.Trigger.Icon sf="doc.text.fill" md="assessment" />
       </NativeTabs.Trigger>
 
+      <NativeTabs.Trigger name="learn">
+        <NativeTabs.Trigger.Label>Guía</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="waveform.path.ecg" md="monitor_heart" />
+      </NativeTabs.Trigger>
+
       <NativeTabs.Trigger name="settings">
         <NativeTabs.Trigger.Label>Ajustes</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="gearshape.fill" md="settings" />

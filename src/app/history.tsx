@@ -3,11 +3,16 @@ import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { PatternInfoModal } from '@/components/pattern-info-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { getEventsSince } from '@/data/readingsRepository';
 import { events } from '@/data/schema';
+import {
+    patternForEventType,
+    type PatternInfo,
+} from '@/domain/patternInfo';
 import { useTheme } from '@/hooks/use-theme';
 import type { AlertEvent } from '@/domain/models';
 
@@ -63,6 +68,7 @@ export default function HistoryScreen() {
   const [expandedTypes, setExpandedTypes] = useState<Set<string>>(
     () => new Set(),
   );
+  const [infoPattern, setInfoPattern] = useState<PatternInfo | null>(null);
 
   // A 3-month window covers the displayed month plus the 28-day trend.
   useFocusEffect(
@@ -333,6 +339,15 @@ export default function HistoryScreen() {
                       ? (TYPE_LABEL[item.type]?.singular ?? item.type)
                       : (TYPE_LABEL[item.type]?.plural ?? item.type)}
                   </ThemedText>
+                  <Pressable
+                    onPress={() =>
+                      setInfoPattern(patternForEventType(item.type))
+                    }
+                    hitSlop={8}>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      ⓘ
+                    </ThemedText>
+                  </Pressable>
                   <ThemedText type="small" themeColor="textSecondary">
                     {expandedTypes.has(item.type) ? '▾' : '▸'}
                   </ThemedText>
@@ -360,6 +375,10 @@ export default function HistoryScreen() {
               </ThemedView>
             )
           }
+        />
+        <PatternInfoModal
+          pattern={infoPattern}
+          onClose={() => setInfoPattern(null)}
         />
       </SafeAreaView>
     </ThemedView>
