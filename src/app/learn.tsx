@@ -24,7 +24,7 @@ export default function LearnScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}>
           <ThemedText type="subtitle" style={styles.title}>
-            Guía
+            Patrones
           </ThemedText>
 
           <ThemedView type="backgroundElement" style={styles.card}>

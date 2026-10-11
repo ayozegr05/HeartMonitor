@@ -14,7 +14,7 @@ export default function AppTabs() {
       labelStyle={{ selected: { color: colors.text } }}>
       <NativeTabs.Trigger name="index">
         <NativeTabs.Trigger.Label>Monitor</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="heart.fill" md="favorite" />
+        <NativeTabs.Trigger.Icon sf="waveform.path.ecg" md="monitor_heart" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="history">
@@ -28,8 +28,8 @@ export default function AppTabs() {
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="learn">
-        <NativeTabs.Trigger.Label>Guía</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="waveform.path.ecg" md="monitor_heart" />
+        <NativeTabs.Trigger.Label>Patrones</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="stethoscope" md="clinical_notes" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="settings">
