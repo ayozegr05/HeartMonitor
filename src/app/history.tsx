@@ -22,6 +22,16 @@ const TYPE_COLOR: Record<string, string> = {
 const WEEKDAY_LABELS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 const TREND_DAYS = 28;
 
+const TYPE_LABEL: Record<string, { singular: string; plural: string }> = {
+  pause: { singular: 'pausa', plural: 'pausas' },
+  bradycardia: { singular: 'bradicardia', plural: 'bradicardias' },
+};
+
+/** Flattened day rows: one collapsible summary header per type + its events. */
+type DayRow =
+  | { kind: 'type'; key: string; type: string; count: number }
+  | { kind: 'event'; key: string; row: EventRow };
+
 /** Local day key — groups events under the calendar's day cells. */
 function dayKey(ts: number): string {
   const d = new Date(ts);
@@ -49,6 +59,9 @@ export default function HistoryScreen() {
   });
   const [selectedDay, setSelectedDay] = useState<string>(() =>
     dayKey(Date.now()),
+  );
+  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(
+    () => new Set(),
   );
 
   // A 3-month window covers the displayed month plus the 28-day trend.
@@ -117,7 +130,38 @@ export default function HistoryScreen() {
       return { year: d.getFullYear(), month: d.getMonth() };
     });
 
-  const selectedRows = byDay.get(selectedDay) ?? [];
+  /** Events of the selected day grouped by type → collapsible summaries. */
+  const dayRows = useMemo((): DayRow[] => {
+    const selectedRows = byDay.get(selectedDay) ?? [];
+    const grouped = new Map<string, EventRow[]>();
+    for (const r of selectedRows) {
+      const arr = grouped.get(r.type);
+      if (arr) arr.push(r);
+      else grouped.set(r.type, [r]);
+    }
+    const rows: DayRow[] = [];
+    // Fixed type order so the summary doesn't reshuffle under the finger.
+    for (const type of ['pause', 'bradycardia']) {
+      const list = grouped.get(type);
+      if (!list) continue;
+      rows.push({ kind: 'type', key: `t-${type}`, type, count: list.length });
+      if (expandedTypes.has(type)) {
+        for (const r of list) {
+          rows.push({ kind: 'event', key: `e-${r.id}`, row: r });
+        }
+      }
+    }
+    return rows;
+  }, [byDay, selectedDay, expandedTypes]);
+
+  const toggleType = (type: string) =>
+    setExpandedTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+
   const [selY, selM, selD] = selectedDay.split('-').map(Number);
   const selectedLabel = new Date(
     selY,
@@ -136,8 +180,8 @@ export default function HistoryScreen() {
           Eventos
         </ThemedText>
         <FlatList
-          data={selectedRows}
-          keyExtractor={(r) => String(r.id)}
+          data={dayRows}
+          keyExtractor={(r) => r.key}
           contentContainerStyle={{ paddingBottom: BottomTabInset }}
           ListHeaderComponent={
             <>
@@ -262,25 +306,60 @@ export default function HistoryScreen() {
               Sin eventos este día.
             </ThemedText>
           }
-          renderItem={({ item }) => (
-            <ThemedView type="backgroundElement" style={styles.row}>
-              <View style={styles.rowHeader}>
-                <View
-                  style={[
-                    styles.dot,
-                    {
-                      backgroundColor:
-                        TYPE_COLOR[item.type] ?? theme.textSecondary,
-                    },
-                  ]}
-                />
-                <ThemedText type="smallBold">{describe(item)}</ThemedText>
-              </View>
-              <ThemedText type="small" themeColor="textSecondary">
-                {new Date(item.timestamp).toLocaleTimeString()}
-              </ThemedText>
-            </ThemedView>
-          )}
+          renderItem={({ item }) =>
+            item.kind === 'type' ? (
+              <Pressable
+                onPress={() => toggleType(item.type)}
+                style={({ pressed }) => [
+                  styles.row,
+                  {
+                    backgroundColor: theme.backgroundElement,
+                    opacity: pressed ? 0.8 : 1,
+                  },
+                ]}>
+                <View style={styles.rowHeader}>
+                  <View
+                    style={[
+                      styles.dot,
+                      {
+                        backgroundColor:
+                          TYPE_COLOR[item.type] ?? theme.textSecondary,
+                      },
+                    ]}
+                  />
+                  <ThemedText type="smallBold">
+                    {item.count}{' '}
+                    {item.count === 1
+                      ? (TYPE_LABEL[item.type]?.singular ?? item.type)
+                      : (TYPE_LABEL[item.type]?.plural ?? item.type)}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {expandedTypes.has(item.type) ? '▾' : '▸'}
+                  </ThemedText>
+                </View>
+              </Pressable>
+            ) : (
+              <ThemedView type="backgroundElement" style={styles.row}>
+                <View style={styles.rowHeader}>
+                  <View
+                    style={[
+                      styles.dot,
+                      {
+                        backgroundColor:
+                          TYPE_COLOR[item.row.type] ?? theme.textSecondary,
+                      },
+                    ]}
+                  />
+                  <ThemedText type="smallBold">
+                    {describe(item.row)}
+                  </ThemedText>
+                </View>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {new Date(item.row.timestamp).toLocaleTimeString()}
+                </ThemedText>
+              </ThemedView>
+            )
+          }
         />
       </SafeAreaView>
     </ThemedView>
@@ -290,7 +369,7 @@ export default function HistoryScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1, paddingHorizontal: Spacing.four },
-  title: { paddingVertical: Spacing.three },
+  title: { paddingVertical: Spacing.three, alignSelf: 'center' },
   card: {
     borderRadius: Spacing.three,
     padding: Spacing.three,
