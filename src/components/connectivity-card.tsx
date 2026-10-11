@@ -45,14 +45,14 @@ export function ConnectivityCard() {
   const statusLine = !bleDevice
     ? 'Ningún dispositivo elegido — busca tu banda o reloj abajo'
     : connectionState === 'streaming'
-      ? `✅ ${sensorLabel ?? bleDevice.label} conectado — monitorizando`
+      ? `✅ ${sensorLabel ?? bleDevice.label} — conectado`
       : connectionState === 'connecting'
         ? `Conectando a ${bleDevice.label}…`
         : connectionState === 'reconnecting'
           ? `Reconectando a ${bleDevice.label}…`
           : connectionState === 'disconnected' || connectionState === 'error'
-            ? `⚠️ ${bleDevice.label} desconectado`
-            : `${bleDevice.label} elegido — apagado (arranca desde Monitor)`;
+            ? `⚠️ ${bleDevice.label} — desconectado`
+            : bleDevice.label;
 
   useEffect(() => {
     const sub = getBleManager().onStateChange(
