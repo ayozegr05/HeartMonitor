@@ -182,6 +182,62 @@ export default function MonitorScreen() {
       style={[styles.container, { paddingTop: insets.top }]}>
 
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+        <ThemedText type="subtitle" style={styles.title}>
+          Monitor
+        </ThemedText>
+
+        {/* Source picker — bajo el título, como las chips de las
+            demás secciones */}
+        <ThemedView style={styles.row}>
+          {(['mock', 'ble'] as const).map((m) => (
+            <Pressable
+              key={m}
+              onPress={() => setMode(m)}
+              style={[
+                styles.chip,
+                { backgroundColor: theme.backgroundElement },
+                mode === m && { backgroundColor: theme.backgroundSelected },
+              ]}>
+              <ThemedText type="small">
+                {m === 'mock' ? 'Simulador' : 'Bluetooth'}
+              </ThemedText>
+            </Pressable>
+          ))}
+        </ThemedView>
+
+        {mode === 'mock' && (
+          <>
+            <ThemedView style={styles.row}>
+              {(Object.keys(MOCK_SCENARIO_LABELS) as MockScenario[]).map((s) => (
+                <Pressable
+                  key={s}
+                  onPress={() => {
+                    setScenario(s);
+                    setMockScenario(s);
+                  }}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: theme.backgroundElement },
+                    scenario === s && {
+                      backgroundColor: theme.backgroundSelected,
+                    },
+                  ]}>
+                  <ThemedText type="small">
+                    {MOCK_SCENARIO_LABELS[s].split(' ')[0]}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </ThemedView>
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              style={styles.hint}>
+              {MOCK_SCENARIO_LABELS[scenario]} — el simulador finge ese
+              ritmo para probar las alertas sin reloj
+            </ThemedText>
+          </>
+        )}
+
         {/* Big live BPM readout */}
         <ThemedView style={styles.hero}>
           <ThemedText type="small" themeColor="textSecondary">
@@ -246,56 +302,7 @@ export default function MonitorScreen() {
           </ThemedView>
         )}
 
-        {/* Source picker */}
-        <ThemedView style={styles.row}>
-          {(['mock', 'ble'] as const).map((m) => (
-            <Pressable
-              key={m}
-              onPress={() => setMode(m)}
-              style={[
-                styles.chip,
-                { backgroundColor: theme.backgroundElement },
-                mode === m && { backgroundColor: theme.backgroundSelected },
-              ]}>
-              <ThemedText type="small">
-                {m === 'mock' ? 'Simulador' : 'Bluetooth'}
-              </ThemedText>
-            </Pressable>
-          ))}
-        </ThemedView>
-
-        {mode === 'mock' ? (
-          <>
-            <ThemedView style={styles.row}>
-              {(Object.keys(MOCK_SCENARIO_LABELS) as MockScenario[]).map((s) => (
-                <Pressable
-                  key={s}
-                  onPress={() => {
-                    setScenario(s);
-                    setMockScenario(s);
-                  }}
-                  style={[
-                    styles.chip,
-                    { backgroundColor: theme.backgroundElement },
-                    scenario === s && {
-                      backgroundColor: theme.backgroundSelected,
-                    },
-                  ]}>
-                  <ThemedText type="small">
-                    {MOCK_SCENARIO_LABELS[s].split(' ')[0]}
-                  </ThemedText>
-                </Pressable>
-              ))}
-            </ThemedView>
-            <ThemedText
-              type="small"
-              themeColor="textSecondary"
-              style={styles.hint}>
-              {MOCK_SCENARIO_LABELS[scenario]} — el simulador finge ese
-              ritmo para probar las alertas sin reloj
-            </ThemedText>
-          </>
-        ) : (
+        {mode !== 'mock' && (
           <>
             {!btPoweredOn && (
               <ThemedView type="backgroundElement" style={styles.alertBox}>
@@ -401,10 +408,14 @@ const styles = StyleSheet.create({
     paddingBottom: BottomTabInset + Spacing.three,
     gap: Spacing.three,
   },
+  title: {
+    alignSelf: 'stretch',
+    paddingVertical: Spacing.three,
+  },
   hero: {
     alignItems: 'center',
     gap: Spacing.one,
-    paddingTop: Spacing.five,
+    paddingTop: Spacing.two,
     paddingBottom: Spacing.three,
   },
   spacer: { flex: 1 },
