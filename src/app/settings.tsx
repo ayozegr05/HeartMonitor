@@ -510,7 +510,7 @@ const styles = StyleSheet.create({
     paddingBottom: BottomTabInset,
     gap: Spacing.four,
   },
-  title: { paddingVertical: Spacing.three },
+  title: { paddingVertical: Spacing.three, alignSelf: 'center' },
   card: {
     borderRadius: Spacing.three,
     padding: Spacing.three,

@@ -868,7 +868,7 @@ export default function ReportsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1, paddingHorizontal: Spacing.four },
-  title: { paddingVertical: Spacing.three },
+  title: { paddingVertical: Spacing.three, alignSelf: 'center' },
   card: {
     borderRadius: Spacing.three,
     padding: Spacing.three,

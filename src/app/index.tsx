@@ -389,7 +389,7 @@ const styles = StyleSheet.create({
   },
   title: {
     paddingVertical: Spacing.three,
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
   },
   hero: {
     alignItems: 'center',
