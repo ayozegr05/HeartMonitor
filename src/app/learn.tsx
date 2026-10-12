@@ -15,6 +15,34 @@ const DEVICE_ROWS: { device: string; caps: string }[] = [
   { device: 'Reloj (Instinct, etc.)', caps: 'FC · bradicardia — solo eso' },
 ];
 
+/** Explicaciones de la pestaña Sueño — qué es cada métrica y de dónde sale. */
+const SLEEP_TOPICS: { title: string; body: string }[] = [
+  {
+    title: 'VFC nocturna (RMSSD)',
+    body: 'La variabilidad entre latido y latido durante la noche. La banda la calcula desde los RR eléctricos — es el estándar clínico. El reloj la estima ópticamente: valor aproximado pero tendencia válida. Lo importante no es un día suelto, es la curva de semanas.',
+  },
+  {
+    title: 'Tono vagal',
+    body: 'El nervio vago es el «freno» del corazón. De noche debe dominar: FC baja, VFC alta y pausas frecuentes (sí, las pausas de deportistas y durmientes suelen ser el vago frenando de más). VFC alta + FC baja + pausas = vago alto — contexto benigno para tus latidos perdidos.',
+  },
+  {
+    title: 'Dormirse / despertar estimado',
+    body: 'Sin acelerómetro ni EEG, la app estima tu ventana de sueño desde la curva de FC: cuando cae y se estabiliza → dormido; cuando sube al despertar → fin. Es una estimación honesta, no fases reales: nadie sin EEG hace eso de verdad.',
+  },
+  {
+    title: 'SpO2 nocturno (del reloj)',
+    body: 'Saturación de oxígeno en sangre mientras duermes. Normal: 95-100% estable. Las caídas marcan interrupciones respiratorias — lo que un médico del sueño mira para apneas. Tras tu operación de cornetes, la tendencia de media y mínima es el dato que más te interesa.',
+  },
+  {
+    title: 'Respiraciones por minuto',
+    body: 'La frecuencia respiratoria nocturna que publica el reloj (típico: 12-20/min). Junto al SpO2 forma tu tracker respiratorio — si la nariz respira mejor, deberías verlo aquí.',
+  },
+  {
+    title: 'Fases de sueño (solo reloj)',
+    body: 'Profundo / ligero / REM son estimaciones del reloj por corazón + movimiento — útiles como tendencia, imprecisas como número exacto (50-65% de acierto real vs polisomnografía). La banda no las calcula todavía: necesitaría activar su acelerómetro.',
+  },
+];
+
 /** Guía tab — how detection works + the pattern catalogue in plain words. */
 export default function LearnScreen() {
   return (
@@ -57,7 +85,7 @@ export default function LearnScreen() {
           </ThemedView>
 
           <ThemedText type="smallBold" style={styles.sectionTitle}>
-            Patrones que la app reconoce
+            ❤️ Tu corazón
           </ThemedText>
           {PATTERN_CATALOG.map((p) => (
             <ThemedView
@@ -71,6 +99,21 @@ export default function LearnScreen() {
               <ThemedText type="small">{p.explain}</ThemedText>
               <ThemedText type="small" style={{ color: '#FFB020' }}>
                 {p.note}
+              </ThemedText>
+            </ThemedView>
+          ))}
+
+          <ThemedText type="smallBold" style={styles.sectionTitle}>
+            😴 Tu sueño
+          </ThemedText>
+          {SLEEP_TOPICS.map((t) => (
+            <ThemedView
+              key={t.title}
+              type="backgroundElement"
+              style={styles.card}>
+              <ThemedText type="smallBold">{t.title}</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {t.body}
               </ThemedText>
             </ThemedView>
           ))}

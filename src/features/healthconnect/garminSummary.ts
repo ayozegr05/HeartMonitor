@@ -39,6 +39,10 @@ const READ_TYPES = [
   'SleepSession',
   'HeartRateVariabilityRmssd',
   'RestingHeartRate',
+  'HeartRate',
+  'Steps',
+  'RespiratoryRate',
+  'OxygenSaturation',
 ] as const;
 
 export async function requestGarminReadAccess(): Promise<boolean> {
@@ -137,4 +141,182 @@ export async function readGarminSummary(days = 7): Promise<GarminDailySummary> {
   }
 
   return out;
+}
+
+/** One day of watch data, keyed by local calendar date (nights → wake day). */
+export interface GarminDayPoint {
+  /** 'YYYY-MM-DD' local date. */
+  day: string;
+  hrvRmssdMs?: number;
+  restingBpm?: number;
+  sleep?: GarminSleepSummary;
+  /** Mean breathing rate (breaths/min) measured that day/night. */
+  respirationPerMin?: number;
+  spo2AvgPct?: number;
+  spo2MinPct?: number;
+  steps?: number;
+  hrMaxBpm?: number;
+  hrMinBpm?: number;
+}
+
+export interface GarminSeries {
+  /** Chronological, oldest first. */
+  points: GarminDayPoint[];
+  source: string | null;
+}
+
+const dayKey = (ms: number): string => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+async function readAll(
+  recordType: string,
+  sinceIso: string,
+): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  let pageToken: string | undefined;
+  do {
+    const res = await readRecords(recordType as never, {
+      timeRangeFilter: { operator: 'after' as const, startTime: sinceIso },
+      ascendingOrder: true,
+      pageSize: 1000,
+      pageToken,
+    });
+    for (const r of res.records) out.push(r as unknown as Record<string, unknown>);
+    pageToken = res.pageToken;
+  } while (pageToken);
+  return out;
+}
+
+const recStart = (r: Record<string, unknown>): number =>
+  Date.parse((r.startTime ?? r.time) as string);
+const recOrigin = (r: Record<string, unknown>): string | null =>
+  ((r.metadata as { dataOrigin?: string } | undefined)?.dataOrigin) ?? null;
+
+/**
+ * Reads the watch's full published series — every day Health Connect has —
+ * aggregated per day so trends can be drawn. Sleep sessions are filed under
+ * the day they END (the morning), matching our own "night" semantics.
+ * Reading volume stays bounded: raw HR samples collapse to daily max/min.
+ */
+export async function readGarminSeries(days = 30): Promise<GarminSeries> {
+  const empty: GarminSeries = { points: [], source: null };
+  if (Platform.OS !== 'android') return empty;
+  if ((await healthConnectStatus()) !== 'available') return empty;
+  if (!(await initialize())) return empty;
+
+  const sinceIso = since(days);
+  const byDay = new Map<string, GarminDayPoint>();
+  let source: string | null = null;
+  const point = (day: string): GarminDayPoint => {
+    let p = byDay.get(day);
+    if (!p) {
+      p = { day };
+      byDay.set(day, p);
+    }
+    return p;
+  };
+  const see = (r: Record<string, unknown>) => {
+    source = source ?? recOrigin(r);
+  };
+
+  try {
+    for (const r of await readAll('SleepSession', sinceIso)) {
+      const stagesMs = { deep: 0, light: 0, rem: 0, awake: 0 };
+      for (const s of (r.stages as StagedRecord['stages']) ?? []) {
+        const ms = Date.parse(s.endTime) - Date.parse(s.startTime);
+        if (s.stage === 5) stagesMs.deep += ms;
+        else if (s.stage === 6) stagesMs.rem += ms;
+        else if (s.stage === 1 || s.stage === 3) stagesMs.awake += ms;
+        else stagesMs.light += ms;
+      }
+      const end = Date.parse(r.endTime as string);
+      point(dayKey(end)).sleep = {
+        startedAt: Date.parse(r.startTime as string),
+        endedAt: end,
+        stagesMs,
+      };
+      see(r);
+    }
+  } catch { /* permiso ausente */ }
+
+  try {
+    for (const r of await readAll('HeartRateVariabilityRmssd', sinceIso)) {
+      const v = r.heartRateVariabilityMillis as number | undefined;
+      if (v !== undefined) {
+        point(dayKey(recStart(r))).hrvRmssdMs = Math.round(v);
+        see(r);
+      }
+    }
+  } catch { /* ignore */ }
+
+  try {
+    for (const r of await readAll('RestingHeartRate', sinceIso)) {
+      const v = r.beatsPerMinute as number | undefined;
+      if (v !== undefined) {
+        point(dayKey(recStart(r))).restingBpm = Math.round(v);
+        see(r);
+      }
+    }
+  } catch { /* ignore */ }
+
+  try {
+    for (const r of await readAll('RespiratoryRate', sinceIso)) {
+      const v = r.rate as number | undefined;
+      if (v !== undefined) {
+        const p = point(dayKey(recStart(r)));
+        // Average if several records land on the same day.
+        p.respirationPerMin =
+          p.respirationPerMin === undefined
+            ? v
+            : (p.respirationPerMin + v) / 2;
+        see(r);
+      }
+    }
+  } catch { /* ignore */ }
+
+  try {
+    for (const r of await readAll('OxygenSaturation', sinceIso)) {
+      const v = r.percentage as number | undefined;
+      if (v !== undefined) {
+        const p = point(dayKey(recStart(r)));
+        p.spo2AvgPct =
+          p.spo2AvgPct === undefined ? v : (p.spo2AvgPct + v) / 2;
+        p.spo2MinPct =
+          p.spo2MinPct === undefined ? v : Math.min(p.spo2MinPct, v);
+        see(r);
+      }
+    }
+  } catch { /* ignore */ }
+
+  try {
+    for (const r of await readAll('Steps', sinceIso)) {
+      const v = r.count as number | undefined;
+      if (v !== undefined) {
+        const p = point(dayKey(recStart(r)));
+        p.steps = (p.steps ?? 0) + v;
+        see(r);
+      }
+    }
+  } catch { /* ignore */ }
+
+  try {
+    for (const r of await readAll('HeartRate', sinceIso)) {
+      const samples = r.samples as { beatsPerMinute: number }[] | undefined;
+      if (!samples?.length) continue;
+      const p = point(dayKey(recStart(r)));
+      for (const s of samples) {
+        const bpm = Math.round(s.beatsPerMinute);
+        p.hrMaxBpm = p.hrMaxBpm === undefined ? bpm : Math.max(p.hrMaxBpm, bpm);
+        p.hrMinBpm = p.hrMinBpm === undefined ? bpm : Math.min(p.hrMinBpm, bpm);
+      }
+      see(r);
+    }
+  } catch { /* ignore */ }
+
+  const points = [...byDay.values()].sort((a, b) =>
+    a.day.localeCompare(b.day),
+  );
+  return { points, source };
 }

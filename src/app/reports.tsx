@@ -31,9 +31,10 @@ import {
 } from '@/features/ecg/ecgSessionRecorder';
 import { loadStrips, removeStrip, type CapturedStrip } from '@/features/ecg/stripStore';
 import {
-  readGarminSummary,
+  readGarminSeries,
   requestGarminReadAccess,
-  type GarminDailySummary,
+  type GarminDayPoint,
+  type GarminSeries,
 } from '@/features/healthconnect/garminSummary';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { shareWeeklyPdf } from '@/features/reports/exportWeeklyPdf';
@@ -503,20 +504,17 @@ function formatClock(ts: number): string {
   });
 }
 
-/** "⌚ Tu reloj dice" — Garmin/Health Sync summary read from Health Connect. */
+/** "⌚ Tu reloj dice" — latest night + today's extras from Health Connect. */
 function GarminCard({
-  summary,
+  series,
   onConnect,
 }: {
-  summary: GarminDailySummary | null;
+  series: GarminSeries | null;
   onConnect: () => void;
 }) {
   const theme = useTheme();
-  const hasData =
-    summary !== null &&
-    (summary.sleep !== null ||
-      summary.hrvRmssdMs !== null ||
-      summary.restingBpm !== null);
+  const latest = series?.points.at(-1);
+  const hasData = (series?.points.length ?? 0) > 0;
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
       <ThemedView style={styles.cardHeader}>
@@ -525,45 +523,66 @@ function GarminCard({
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
           vía Health Connect
-          {summary?.source ? ` · ${summary.source}` : ''}
+          {series?.source ? ` · ${series.source}` : ''}
         </ThemedText>
       </ThemedView>
-      {hasData ? (
+      {hasData && latest ? (
         <>
-          {summary.sleep && (
+          {latest.sleep && (
             <ThemedText type="small">
-              Último sueño: {formatClock(summary.sleep.startedAt)} →{' '}
-              {formatClock(summary.sleep.endedAt)} (
+              Último sueño: {formatClock(latest.sleep.startedAt)} →{' '}
+              {formatClock(latest.sleep.endedAt)} (
               {formatDuration(
-                summary.sleep.endedAt - summary.sleep.startedAt,
+                latest.sleep.endedAt - latest.sleep.startedAt,
               )}
               )
             </ThemedText>
           )}
-          {summary.sleep &&
-            (summary.sleep.stagesMs.deep +
-              summary.sleep.stagesMs.light +
-              summary.sleep.stagesMs.rem >
+          {latest.sleep &&
+            (latest.sleep.stagesMs.deep +
+              latest.sleep.stagesMs.light +
+              latest.sleep.stagesMs.rem >
               0) && (
               <ThemedText type="small" themeColor="textSecondary">
-                💤 profundo {formatDuration(summary.sleep.stagesMs.deep)} ·
-                REM {formatDuration(summary.sleep.stagesMs.rem)} · ligero{' '}
-                {formatDuration(summary.sleep.stagesMs.light)}
-                {summary.sleep.stagesMs.awake > 0 &&
-                  ` · despierto ${formatDuration(summary.sleep.stagesMs.awake)}`}
+                💤 profundo {formatDuration(latest.sleep.stagesMs.deep)} · REM{' '}
+                {formatDuration(latest.sleep.stagesMs.rem)} · ligero{' '}
+                {formatDuration(latest.sleep.stagesMs.light)}
+                {latest.sleep.stagesMs.awake > 0 &&
+                  ` · despierto ${formatDuration(latest.sleep.stagesMs.awake)}`}
               </ThemedText>
             )}
           <ThemedText type="small" themeColor="textSecondary">
-            {summary.hrvRmssdMs !== null && `VFC reloj ${summary.hrvRmssdMs} ms`}
-            {summary.hrvRmssdMs !== null && summary.restingBpm !== null && ' · '}
-            {summary.restingBpm !== null &&
-              `FC reposo ${summary.restingBpm} bpm`}
+            {[
+              latest.hrvRmssdMs !== undefined &&
+                `VFC reloj ${latest.hrvRmssdMs} ms`,
+              latest.restingBpm !== undefined &&
+                `FC reposo ${latest.restingBpm} bpm`,
+              latest.respirationPerMin !== undefined &&
+                `resp ${latest.respirationPerMin.toFixed(1)}/min`,
+              latest.spo2AvgPct !== undefined &&
+                `SpO2 ${Math.round(latest.spo2AvgPct)}%` +
+                  (latest.spo2MinPct !== undefined
+                    ? ` (mín ${Math.round(latest.spo2MinPct)}%)`
+                    : ''),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {[
+              latest.steps !== undefined &&
+                `pasos ${latest.steps.toLocaleString('es-ES')}`,
+              latest.hrMinBpm !== undefined &&
+                `FC día ${latest.hrMinBpm}–${latest.hrMaxBpm} bpm`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </ThemedText>
         </>
       ) : (
         <>
           <ThemedText type="small" themeColor="textSecondary">
-            El resumen del reloj (sueño, fases, VFC) llega si activas en
+            El resumen del reloj (sueño, fases, VFC, SpO2) llega si activas en
             Garmin Connect → Ajustes → Health Connect la escritura de datos.
             Luego esta app solo los lee.
           </ThemedText>
@@ -627,6 +646,153 @@ function bucketPoints(
  * RMSSD trend card. 4 weeks = one bar per night; longer ranges show
  * weekly (3M/6M) or monthly (1A) averages of the same data.
  */
+const dayKeyOf = (ms: number): string => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/**
+ * VFC comparativa: nuestra banda (verde) vs el reloj (azul), barra por día.
+ * Solo aparece cuando el reloj ha publicado VFC en Health Connect.
+ */
+function WatchVsBandTrend({
+  items,
+  watch,
+}: {
+  items: SessionWithReport[];
+  watch: GarminSeries | null;
+}) {
+  const watchByDay = new Map(
+    (watch?.points ?? [])
+      .filter((p) => p.hrvRmssdMs !== undefined)
+      .map((p) => [p.day, p.hrvRmssdMs as number]),
+  );
+  if (watchByDay.size === 0) return null;
+
+  const oursByDay = new Map<string, number>();
+  for (const i of items) {
+    const v = i.session.rmssdMs;
+    if (v != null) {
+      // File our night under the wake day, same as the watch.
+      oursByDay.set(dayKeyOf(i.session.endedAt ?? i.session.startedAt), v);
+    }
+  }
+  const days = [...new Set([...watchByDay.keys(), ...oursByDay.keys()])]
+    .sort()
+    .slice(-14);
+  const max = Math.max(
+    1,
+    ...days.map((d) =>
+      Math.max(watchByDay.get(d) ?? 0, oursByDay.get(d) ?? 0),
+    ),
+  );
+
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          VFC: banda vs reloj
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          ms por noche
+        </ThemedText>
+      </ThemedView>
+      <View style={styles.trendRow}>
+        {days.map((d) => {
+          const ours = oursByDay.get(d);
+          const theirs = watchByDay.get(d);
+          return (
+            <View key={d} style={styles.trendPair}>
+              <View style={styles.trendPairBars}>
+                <View
+                  style={[
+                    styles.trendBar,
+                    {
+                      height: `${ours ? Math.max(6, (ours / max) * 100) : 0}%`,
+                      backgroundColor: '#2E7D32',
+                    },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.trendBar,
+                    {
+                      height: `${theirs ? Math.max(6, (theirs / max) * 100) : 0}%`,
+                      backgroundColor: '#3B82F6',
+                    },
+                  ]}
+                />
+              </View>
+              <ThemedText
+                type="small"
+                themeColor="textSecondary"
+                style={styles.trendPairLabel}>
+                {d.slice(8)}
+              </ThemedText>
+            </View>
+          );
+        })}
+      </View>
+      <ThemedText type="small" themeColor="textSecondary">
+        <ThemedText type="small" style={{ color: '#2E7D32' }}>■</ThemedText> banda
+        H10 ·{' '}
+        <ThemedText type="small" style={{ color: '#3B82F6' }}>■</ThemedText>{' '}
+        reloj (óptico)
+      </ThemedText>
+      {watch?.source && (
+        <ThemedText type="small" themeColor="textSecondary">
+          Fuente: {watch.source} — valores ópticos aproximados, la tendencia es
+          lo que importa.
+        </ThemedText>
+      )}
+    </ThemedView>
+  );
+}
+
+/** Night card when only the watch has data (no band session that night). */
+function WatchNightCard({ point }: { point: GarminDayPoint }) {
+  const ws = point.sleep;
+  const night = new Date(`${point.day}T12:00:00`).toLocaleDateString(
+    undefined,
+    { weekday: 'short', day: 'numeric', month: 'short' },
+  );
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          {night}
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          solo reloj
+        </ThemedText>
+      </ThemedView>
+      {ws && (
+        <ThemedText type="small">
+          {formatClock(ws.startedAt)} → {formatClock(ws.endedAt)} (
+          {formatDuration(ws.endedAt - ws.startedAt)})
+          {ws.stagesMs.deep + ws.stagesMs.light + ws.stagesMs.rem > 0 &&
+            ` · prof ${formatDuration(ws.stagesMs.deep)} REM ${formatDuration(ws.stagesMs.rem)} lig ${formatDuration(ws.stagesMs.light)}`}
+        </ThemedText>
+      )}
+      <ThemedText type="small" themeColor="textSecondary">
+        {[
+          point.hrvRmssdMs !== undefined && `VFC ${point.hrvRmssdMs} ms`,
+          point.restingBpm !== undefined && `reposo ${point.restingBpm} bpm`,
+          point.respirationPerMin !== undefined &&
+            `resp ${point.respirationPerMin.toFixed(1)}/min`,
+          point.spo2AvgPct !== undefined &&
+            `SpO2 ${Math.round(point.spo2AvgPct)}%` +
+              (point.spo2MinPct !== undefined
+                ? ` (mín ${Math.round(point.spo2MinPct)}%)`
+                : ''),
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </ThemedText>
+    </ThemedView>
+  );
+}
+
 function RmssdTrend() {
   const theme = useTheme();
   const [range, setRange] = useState<TrendRange>('4s');
@@ -742,9 +908,12 @@ function sleepLine(sleep: SleepMetrics): string {
 
 function SleepCard({
   item,
+  watch,
   onDelete,
 }: {
   item: SessionWithReport;
+  /** Watch data for this same night (filed under its wake day). */
+  watch?: GarminDayPoint;
   onDelete?: (item: SessionWithReport) => void;
 }) {
   const { session, report, sleep } = item;
@@ -754,6 +923,7 @@ function SleepCard({
     month: 'short',
   });
   const hasSleep = sleep.estimatedOnsetMs !== null;
+  const ws = watch?.sleep;
   return (
     <Pressable
       onLongPress={onDelete ? () => onDelete(item) : undefined}
@@ -770,18 +940,55 @@ function SleepCard({
           {session.sensorLabel}
         </ThemedText>
       </ThemedView>
+      <ThemedText type="small" themeColor="textSecondary">
+        Banda:
+      </ThemedText>
       {hasSleep ? (
-        <ThemedText type="small">{sleepLine(sleep)}</ThemedText>
+        <ThemedText type="small">  {sleepLine(sleep)}</ThemedText>
       ) : (
         <ThemedText type="small" themeColor="textSecondary">
-          Sin ventana de sueño clara en esta sesión.
+          {'  '}Sin ventana de sueño clara en esta sesión.
         </ThemedText>
       )}
       <ThemedText type="small" themeColor="textSecondary">
+        {'  '}
         {report.rmssdMs !== null
           ? `VFC ${report.rmssdMs} ms · ${vagalNote(sleep.vagalTone ?? 'medio', report.pauseCount)}`
           : 'Sin RR — VFC y vago no disponibles con este sensor'}
       </ThemedText>
+      {watch && (
+        <>
+          <ThemedText type="small" themeColor="textSecondary">
+            Reloj:
+          </ThemedText>
+          {ws && (
+            <ThemedText type="small">
+              {'  '}
+              {formatClock(ws.startedAt)} → {formatClock(ws.endedAt)} (
+              {formatDuration(ws.endedAt - ws.startedAt)})
+              {(ws.stagesMs.deep + ws.stagesMs.light + ws.stagesMs.rem > 0) &&
+                ` · prof ${formatDuration(ws.stagesMs.deep)} REM ${formatDuration(ws.stagesMs.rem)} lig ${formatDuration(ws.stagesMs.light)}`}
+            </ThemedText>
+          )}
+          <ThemedText type="small" themeColor="textSecondary">
+            {'  '}
+            {[
+              watch.hrvRmssdMs !== undefined && `VFC ${watch.hrvRmssdMs} ms`,
+              watch.restingBpm !== undefined &&
+                `reposo ${watch.restingBpm} bpm`,
+              watch.respirationPerMin !== undefined &&
+                `resp ${watch.respirationPerMin.toFixed(1)}/min`,
+              watch.spo2AvgPct !== undefined &&
+                `SpO2 ${Math.round(watch.spo2AvgPct)}%` +
+                  (watch.spo2MinPct !== undefined
+                    ? ` (mín ${Math.round(watch.spo2MinPct)}%)`
+                    : ''),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </ThemedText>
+        </>
+      )}
     </ThemedView>
     </Pressable>
   );
@@ -848,7 +1055,45 @@ export default function ReportsScreen() {
   const [collapsedWeeks, setCollapsedWeeks] = useState<Set<string>>(
     () => new Set(),
   );
-  const [garmin, setGarmin] = useState<GarminDailySummary | null>(null);
+  const [garmin, setGarmin] = useState<GarminSeries | null>(null);
+  const garminByDay = new Map(
+    (garmin?.points ?? []).map((p) => [p.day, p]),
+  );
+  /** Nights from band sessions merged with watch-only nights (wake-day key). */
+  const suenoRows = ((): {
+    key: string;
+    sort: number;
+    item?: SessionWithReport;
+    point?: GarminDayPoint;
+  }[] => {
+    const rows: {
+      key: string;
+      sort: number;
+      item?: SessionWithReport;
+      point?: GarminDayPoint;
+    }[] = [];
+    const used = new Set<string>();
+    for (const item of items) {
+      const dk = dayKeyOf(item.session.endedAt ?? item.session.startedAt);
+      used.add(dk);
+      rows.push({
+        key: `b${item.session.id}`,
+        sort: item.session.endedAt ?? item.session.startedAt,
+        item,
+        point: garminByDay.get(dk),
+      });
+    }
+    for (const p of garmin?.points ?? []) {
+      if (!used.has(p.day) && (p.sleep || p.hrvRmssdMs !== undefined)) {
+        rows.push({
+          key: `w${p.day}`,
+          sort: Date.parse(`${p.day}T12:00:00`),
+          point: p,
+        });
+      }
+    }
+    return rows.sort((a, b) => b.sort - a.sort);
+  })();
   /** 'Now' at the last data load — window ends for live sessions. */
   const [nowMs, setNowMs] = useState(0);
   const hasAnyEvents = items.some((i) => i.report.eventCount > 0);
@@ -890,7 +1135,7 @@ export default function ReportsScreen() {
       listEcgSessions()
         .then(setSessions)
         .catch(() => setSessions([]));
-      readGarminSummary()
+      readGarminSeries(30)
         .then(setGarmin)
         .catch(() => setGarmin(null));
     }, [thresholds]),
@@ -898,7 +1143,7 @@ export default function ReportsScreen() {
 
   const connectGarmin = () => {
     requestGarminReadAccess()
-      .then((granted) => (granted ? readGarminSummary() : null))
+      .then((granted) => (granted ? readGarminSeries(30) : null))
       .then(setGarmin)
       .catch(() => setGarmin(null));
   };
@@ -1216,12 +1461,13 @@ export default function ReportsScreen() {
 
         {tab === 'sueno' && (
           <FlatList
-            data={items}
-            keyExtractor={(i) => String(i.session.id)}
+            data={suenoRows}
+            keyExtractor={(r) => r.key}
             contentContainerStyle={{ paddingBottom: BottomTabInset }}
             ListHeaderComponent={
               <>
-                <GarminCard summary={garmin} onConnect={connectGarmin} />
+                <GarminCard series={garmin} onConnect={connectGarmin} />
+                <WatchVsBandTrend items={items} watch={garmin} />
                 <RmssdTrend />
               </>
             }
@@ -1231,9 +1477,17 @@ export default function ReportsScreen() {
                 sale de la propia curva de FC, sin acelerómetro.
               </ThemedText>
             }
-            renderItem={({ item }) => (
-              <SleepCard item={item} onDelete={confirmDeleteReport} />
-            )}
+            renderItem={({ item }) =>
+              item.item ? (
+                <SleepCard
+                  item={item.item}
+                  watch={item.point}
+                  onDelete={confirmDeleteReport}
+                />
+              ) : item.point ? (
+                <WatchNightCard point={item.point} />
+              ) : null
+            }
           />
         )}
       </SafeAreaView>
@@ -1316,6 +1570,21 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 2,
     minWidth: 4,
+  },
+  trendPair: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  trendPairBars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 2,
+    flex: 1,
+    width: '100%',
+  },
+  trendPairLabel: {
+    fontSize: 9,
   },
   trendChips: {
     flexDirection: 'row',
