@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -35,7 +35,9 @@ import {
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { shareWeeklyPdf } from '@/features/reports/exportWeeklyPdf';
 import {
+    loadRmssdSeries,
     loadSessionReports,
+    type RmssdPoint,
     type SessionWithReport,
 } from '@/features/reports/sessionReports';
 import { weeklyReportHtml } from '@/features/reports/weeklyReportHtml';
@@ -568,40 +570,149 @@ function GarminCard({
   );
 }
 
-/** RMSSD per monitored night for the last 4 weeks — simple bar chart. */
-function RmssdTrend({ items }: { items: SessionWithReport[] }) {
-  const days = items.filter((i) => i.report.rmssdMs !== null).slice(0, 28);
-  if (days.length < 2) return null;
-  const max = Math.max(...days.map((d) => d.report.rmssdMs ?? 0), 1);
+type TrendRange = '4s' | '3m' | '6m' | '1a';
+const TREND_RANGES: { key: TrendRange; label: string; days: number }[] = [
+  { key: '4s', label: '4S', days: 28 },
+  { key: '3m', label: '3M', days: 91 },
+  { key: '6m', label: '6M', days: 183 },
+  { key: '1a', label: '1A', days: 366 },
+];
+
+function rmssdColor(v: number): string {
+  return v >= 40 ? '#2E7D32' : v >= 25 ? '#FFB020' : '#E5484D';
+}
+
+/**
+ * Buckets per-night points into weekly or monthly averages so long
+ * ranges stay readable (one bar per bucket, height = bucket mean).
+ */
+function bucketPoints(
+  points: RmssdPoint[],
+  mode: 'week' | 'month',
+): { key: string; value: number }[] {
+  const groups = new Map<string, number[]>();
+  for (const p of points) {
+    const d = new Date(p.startedAt);
+    const key =
+      mode === 'month'
+        ? `${d.getFullYear()}-${d.getMonth()}`
+        : String(
+            new Date(
+              d.getFullYear(),
+              d.getMonth(),
+              d.getDate() - ((d.getDay() + 6) % 7),
+            ).getTime(),
+          );
+    const list = groups.get(key) ?? [];
+    list.push(p.rmssdMs);
+    groups.set(key, list);
+  }
+  return [...groups.entries()]
+    .map(([key, vals]) => ({
+      key,
+      value: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length),
+    }))
+    .reverse();
+}
+
+/**
+ * RMSSD trend card. 4 weeks = one bar per night; longer ranges show
+ * weekly (3M/6M) or monthly (1A) averages of the same data.
+ */
+function RmssdTrend() {
+  const theme = useTheme();
+  const [range, setRange] = useState<TrendRange>('4s');
+  const [data, setData] = useState<{ range: TrendRange; points: RmssdPoint[] }>({
+    range: '4s',
+    points: [],
+  });
+  const [loaded, setLoaded] = useState<TrendRange | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const days = TREND_RANGES.find((r) => r.key === range)!.days;
+    const since = Date.now() - days * 86_400_000;
+    loadRmssdSeries(since, (p) => {
+      if (alive) setData({ range, points: p });
+    })
+      .then((p) => {
+        if (alive) setData({ range, points: p });
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setLoaded(range);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [range]);
+
+  const loading = loaded !== range;
+  const points = data.range === range ? data.points : [];
+  const aggregated = range !== '4s';
+  const bars = aggregated
+    ? bucketPoints(points, range === '1a' ? 'month' : 'week')
+    : [...points]
+        .reverse()
+        .map((p) => ({ key: String(p.sessionId), value: p.rmssdMs }));
+  const max = Math.max(...bars.map((b) => b.value), 1);
+
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
-      <ThemedText type="smallBold">VFC nocturna · últimas noches</ThemedText>
-      <View style={styles.trendRow}>
-        {[...days].reverse().map((d) => (
-          <View
-            key={d.session.id}
-            style={[
-              styles.trendBar,
-              {
-                height: Math.max(4, ((d.report.rmssdMs ?? 0) / max) * 48),
-                backgroundColor:
-                  d.report.rmssdMs! >= 40
-                    ? '#2E7D32'
-                    : d.report.rmssdMs! >= 25
-                      ? '#FFB020'
-                      : '#E5484D',
-              },
-            ]}
-          />
-        ))}
-      </View>
-      <ThemedText type="small" themeColor="textSecondary">
-        {new Date(days[days.length - 1].session.startedAt).toLocaleDateString(
-          undefined,
-          { day: 'numeric', month: 'short' },
-        )}{' '}
-        → hoy · verde ≥40 ms · naranja ≥25 · rojo &lt;25
-      </ThemedText>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          VFC nocturna
+        </ThemedText>
+        <View style={styles.trendChips}>
+          {TREND_RANGES.map((r) => (
+            <Pressable
+              key={r.key}
+              onPress={() => setRange(r.key)}
+              style={[
+                styles.trendChip,
+                range === r.key && {
+                  backgroundColor: theme.backgroundSelected,
+                },
+              ]}>
+              <ThemedText
+                type="small"
+                themeColor={range === r.key ? 'text' : 'textSecondary'}>
+                {r.label}
+              </ThemedText>
+            </Pressable>
+          ))}
+        </View>
+      </ThemedView>
+      {bars.length === 0 ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          {loading ? 'Calculando…' : 'Sin datos de VFC en este rango.'}
+        </ThemedText>
+      ) : (
+        <>
+          <View style={styles.trendRow}>
+            {bars.map((b) => (
+              <View
+                key={b.key}
+                style={[
+                  styles.trendBar,
+                  {
+                    height: Math.max(4, (b.value / max) * 48),
+                    backgroundColor: rmssdColor(b.value),
+                  },
+                ]}
+              />
+            ))}
+          </View>
+          <ThemedText type="small" themeColor="textSecondary">
+            {aggregated
+              ? range === '1a'
+                ? 'media mensual · '
+                : 'media semanal · '
+              : 'por noche · '}
+            verde ≥40 ms · naranja ≥25 · rojo &lt;25
+          </ThemedText>
+        </>
+      )}
     </ThemedView>
   );
 }
@@ -1057,7 +1168,7 @@ export default function ReportsScreen() {
             ListHeaderComponent={
               <>
                 <GarminCard summary={garmin} onConnect={connectGarmin} />
-                <RmssdTrend items={items} />
+                <RmssdTrend />
               </>
             }
             ListEmptyComponent={
@@ -1149,5 +1260,14 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 2,
     minWidth: 4,
+  },
+  trendChips: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  trendChip: {
+    borderRadius: Spacing.five,
+    paddingHorizontal: 10,
+    paddingVertical: 2,
   },
 });

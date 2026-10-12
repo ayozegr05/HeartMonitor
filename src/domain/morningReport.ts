@@ -1,4 +1,4 @@
-import { cleanRrIntervals, rmssd } from './hrv';
+import { rmssdOfReadings } from './hrv';
 import { vagalToneOf } from './sleepAnalysis';
 import type { AlertEvent, ThresholdProfile } from './models';
 import { activeLowThreshold, isNightTime } from './thresholds';
@@ -107,22 +107,7 @@ export function buildSessionReport(
   const inWindow = events.filter(
     (e) => e.timestamp >= window.startedAt && e.timestamp < windowEnd,
   );
-  const rrs: number[] = [];
-  for (const r of sorted) {
-    let v = r.rrIntervalsMs;
-    if (typeof v === 'string') {
-      try {
-        v = JSON.parse(v) as number[];
-      } catch {
-        v = undefined;
-      }
-    }
-    if (Array.isArray(v)) {
-      for (const rr of v) if (typeof rr === 'number') rrs.push(rr);
-    }
-  }
-  const rmssdMs =
-    rrs.length >= 2 ? Math.round(rmssd(cleanRrIntervals(rrs))) : null;
+  const rmssdMs = rmssdOfReadings(sorted);
 
   const pauses = inWindow.filter((e) => e.type === 'pause');
   const longestPauseMs = pauses.reduce<number | null>(

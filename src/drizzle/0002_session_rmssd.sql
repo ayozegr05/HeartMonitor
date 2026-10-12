@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `rmssd_ms` integer;

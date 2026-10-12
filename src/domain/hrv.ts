@@ -42,3 +42,35 @@ export function sessionRmssd(
   }
   return rmssd(cleanRrIntervals(all));
 }
+
+/**
+ * Extracts every RR interval from a readings stream, tolerating the
+ * column arriving as a JSON string (raw rows) or an already-parsed array.
+ */
+export function rrIntervalsFromReadings(
+  readings: { rrIntervalsMs?: unknown }[],
+): number[] {
+  const out: number[] = [];
+  for (const r of readings) {
+    let v = r.rrIntervalsMs;
+    if (typeof v === 'string') {
+      try {
+        v = JSON.parse(v);
+      } catch {
+        continue;
+      }
+    }
+    if (Array.isArray(v)) {
+      for (const rr of v) if (typeof rr === 'number') out.push(rr);
+    }
+  }
+  return out;
+}
+
+/** Rounded RMSSD (ms) for a readings stream, or null with too few RRs. */
+export function rmssdOfReadings(
+  readings: { rrIntervalsMs?: unknown }[],
+): number | null {
+  const rrs = rrIntervalsFromReadings(readings);
+  return rrs.length >= 2 ? Math.round(rmssd(cleanRrIntervals(rrs))) : null;
+}

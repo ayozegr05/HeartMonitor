@@ -16,6 +16,11 @@ export const sessions = sqliteTable(
     /** 'mock' | 'ble' */
     source: text('source').notNull(),
     sensorLabel: text('sensor_label').notNull(),
+    /**
+     * Cached nightly RMSSD (ms) — computed once from the session's RR
+     * stream so long-range trends don't re-parse millions of readings.
+     */
+    rmssdMs: integer('rmssd_ms'),
   },
   (t) => [index('idx_sessions_started_at').on(t.startedAt)],
 );

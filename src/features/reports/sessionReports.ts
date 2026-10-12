@@ -12,7 +12,10 @@ import {
   getRecentSessions,
   getSessionAlertEvents,
   getSessionReadings,
+  getSessionsSince,
+  setSessionRmssdMs,
 } from '@/data/readingsRepository';
+import { rmssdOfReadings } from '@/domain/hrv';
 import type { sessions } from '@/data/schema';
 
 export type SessionRow = typeof sessions.$inferSelect;
@@ -52,4 +55,54 @@ export async function loadSessionReports(
       return { session, report, events, sleep };
     }),
   );
+}
+
+/**
+ * Computes the session's RMSSD from its raw RR stream and caches it on
+ * the session row. Called once when a session ends (and lazily for
+ * sessions that predate the cache), so trends never re-parse millions
+ * of readings.
+ */
+export async function computeSessionRmssdMs(
+  sessionId: number,
+): Promise<number | null> {
+  const readings = await getSessionReadings(sessionId);
+  const value = rmssdOfReadings(readings);
+  await setSessionRmssdMs(sessionId, value);
+  return value;
+}
+
+export interface RmssdPoint {
+  sessionId: number;
+  startedAt: number;
+  rmssdMs: number;
+}
+
+/**
+ * One RMSSD point per monitored session in the range, newest first.
+ * Uses the per-session cache; sessions missing it are computed and
+ * stored on the fly, reporting progress so long backfills can render
+ * incrementally.
+ */
+export async function loadRmssdSeries(
+  sinceMs: number,
+  onProgress?: (points: RmssdPoint[]) => void,
+): Promise<RmssdPoint[]> {
+  const rows = await getSessionsSince(sinceMs);
+  const points: RmssdPoint[] = [];
+  for (const row of rows) {
+    let value = row.rmssdMs;
+    if (value == null) {
+      try {
+        value = await computeSessionRmssdMs(row.id);
+      } catch {
+        value = null;
+      }
+    }
+    if (value != null) {
+      points.push({ sessionId: row.id, startedAt: row.startedAt, rmssdMs: value });
+      onProgress?.([...points]);
+    }
+  }
+  return points;
 }

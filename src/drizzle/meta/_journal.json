@@ -15,6 +15,13 @@
       "when": 1791447088046,
       "tag": "0001_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791817394001,
+      "tag": "0002_session_rmssd",
+      "breakpoints": true
     }
   ]
 }

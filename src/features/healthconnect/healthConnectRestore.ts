@@ -154,6 +154,7 @@ export async function restoreFromHealthConnect(
         endedAt: g.end + 1,
         source: RESTORE_SOURCE,
         sensorLabel: 'Health Connect',
+        rmssdMs: null,
       });
       createdSessions += 1;
       continue;

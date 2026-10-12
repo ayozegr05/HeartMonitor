@@ -115,6 +115,26 @@ export async function getRecentSessions(limit = 30) {
     .limit(limit);
 }
 
+/** All sessions started at or after `sinceMs`, newest first. */
+export async function getSessionsSince(sinceMs: number) {
+  return getDb()
+    .select()
+    .from(sessions)
+    .where(gte(sessions.startedAt, sinceMs))
+    .orderBy(desc(sessions.startedAt));
+}
+
+/** Caches the session's nightly RMSSD so trends skip the raw RR stream. */
+export async function setSessionRmssdMs(
+  sessionId: number,
+  rmssdMs: number | null,
+): Promise<void> {
+  await getDb()
+    .update(sessions)
+    .set({ rmssdMs })
+    .where(eq(sessions.id, sessionId));
+}
+
 export async function getSessionReadings(sessionId: number) {
   return getDb()
     .select()

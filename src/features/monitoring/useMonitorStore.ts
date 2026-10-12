@@ -48,6 +48,7 @@ import {
     stopMonitoringService,
 } from '@/features/monitoring/foregroundService';
 import { sendTelegramMessage } from '@/features/caregiver/telegram';
+import { computeSessionRmssdMs } from '@/features/reports/sessionReports';
 import { BleHeartRateSensor } from '@/sensors/BleHeartRateSensor';
 import { getBleManager } from '@/sensors/bleManager';
 import {
@@ -579,6 +580,7 @@ export const useMonitorStore = create<MonitorState>()(
             const sid = get().sessionId;
             if (sid != null) {
               void endSession(sid, Date.now()).catch(() => {});
+              void computeSessionRmssdMs(sid).catch(() => {});
               set({ sessionId: null, sessionStartedAt: null });
             }
             void stopMonitoringService().catch(() => {});
@@ -608,6 +610,7 @@ export const useMonitorStore = create<MonitorState>()(
                 sessionId,
                 rows.at(-1)?.timestamp ?? Date.now(),
               );
+              void computeSessionRmssdMs(sessionId).catch(() => {});
             } catch (e) {
               console.warn('closing stale session failed', e);
             }
@@ -678,6 +681,7 @@ export const useMonitorStore = create<MonitorState>()(
           const { sessionId } = get();
           if (sessionId != null) {
             void endSession(sessionId, Date.now()).catch(console.warn);
+            void computeSessionRmssdMs(sessionId).catch(console.warn);
           }
           await detachSensor();
           ecgAutoService.detach();
