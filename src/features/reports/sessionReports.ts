@@ -4,6 +4,11 @@ import {
   type SessionReport,
 } from '@/domain/morningReport';
 import {
+  analyzeSleepSession,
+  vagalToneOf,
+  type SleepMetrics,
+} from '@/domain/sleepAnalysis';
+import {
   getRecentSessions,
   getSessionAlertEvents,
   getSessionReadings,
@@ -16,6 +21,8 @@ export interface SessionWithReport {
   session: SessionRow;
   report: SessionReport;
   events: AlertEvent[];
+  /** Sleep-window estimate from the session's own HR curve. */
+  sleep: SleepMetrics;
 }
 
 /**
@@ -34,16 +41,15 @@ export async function loadSessionReports(
         getSessionReadings(session.id),
         getSessionAlertEvents(session.id),
       ]);
-      return {
-        session,
-        report: buildSessionReport(
-          { startedAt: session.startedAt, endedAt: session.endedAt },
-          readings,
-          events,
-          thresholds,
-        ),
+      const report = buildSessionReport(
+        { startedAt: session.startedAt, endedAt: session.endedAt },
+        readings,
         events,
-      };
+        thresholds,
+      );
+      const sleep = analyzeSleepSession(readings);
+      sleep.vagalTone = vagalToneOf(report.rmssdMs);
+      return { session, report, events, sleep };
     }),
   );
 }

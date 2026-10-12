@@ -1,4 +1,5 @@
 import { cleanRrIntervals, rmssd } from './hrv';
+import { vagalToneOf } from './sleepAnalysis';
 import type { AlertEvent, ThresholdProfile } from './models';
 import { activeLowThreshold, isNightTime } from './thresholds';
 
@@ -176,5 +177,8 @@ export function formatReportSummary(report: SessionReport): string {
       ? 'sin eventos'
       : `${report.eventCount} evento${report.eventCount === 1 ? '' : 's'}`,
   );
+  if (report.rmssdMs !== null) {
+    parts.push(`VFC ${report.rmssdMs} ms (vago ${vagalToneOf(report.rmssdMs)})`);
+  }
   return parts.join(' · ');
 }
