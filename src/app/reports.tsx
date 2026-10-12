@@ -7,7 +7,10 @@ import { HrChart } from '@/components/hr-chart';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
-import { getSessionReadingBuckets } from '@/data/readingsRepository';
+import {
+    deleteSessionCascade,
+    getSessionReadingBuckets,
+} from '@/data/readingsRepository';
 import {
     eventBucketIndices,
     type ChartBucket,
@@ -226,6 +229,7 @@ function ReportCard({
   onDeleteStrip,
   onExportSession,
   onDeleteSession,
+  onDeleteReport,
 }: {
   item: SessionWithReport;
   thresholds: ThresholdProfile;
@@ -235,6 +239,7 @@ function ReportCard({
   onDeleteStrip: (s: CapturedStrip) => void;
   onExportSession: (s: EcgSessionInfo) => void;
   onDeleteSession: (s: EcgSessionInfo) => void;
+  onDeleteReport?: (item: SessionWithReport) => void;
 }) {
   const theme = useTheme();
   const { session, report, events } = item;
@@ -265,6 +270,9 @@ function ReportCard({
   return (
     <Pressable
       onPress={toggleExpand}
+      onLongPress={
+        onDeleteReport ? () => onDeleteReport(item) : undefined
+      }
       style={({ pressed }) => [
         styles.card,
         hasEvents && styles.cardWithEvents,
@@ -732,7 +740,13 @@ function sleepLine(sleep: SleepMetrics): string {
   return parts.join(' · ');
 }
 
-function SleepCard({ item }: { item: SessionWithReport }) {
+function SleepCard({
+  item,
+  onDelete,
+}: {
+  item: SessionWithReport;
+  onDelete?: (item: SessionWithReport) => void;
+}) {
   const { session, report, sleep } = item;
   const night = new Date(session.startedAt).toLocaleDateString(undefined, {
     weekday: 'short',
@@ -741,7 +755,13 @@ function SleepCard({ item }: { item: SessionWithReport }) {
   });
   const hasSleep = sleep.estimatedOnsetMs !== null;
   return (
-    <ThemedView type="backgroundElement" style={styles.card}>
+    <Pressable
+      onLongPress={onDelete ? () => onDelete(item) : undefined}
+      style={({ pressed }) => [
+        styles.card,
+        { opacity: pressed ? 0.7 : 1 },
+      ]}>
+    <ThemedView type="backgroundElement">
       <ThemedView style={styles.cardHeader}>
         <ThemedText type="smallBold" style={styles.cardTitle}>
           {night}
@@ -763,6 +783,7 @@ function SleepCard({ item }: { item: SessionWithReport }) {
           : 'Sin RR — VFC y vago no disponibles con este sensor'}
       </ThemedText>
     </ThemedView>
+    </Pressable>
   );
 }
 
@@ -903,6 +924,38 @@ export default function ReportsScreen() {
   const deleteSessionRec = (s: EcgSessionInfo) => {
     removeEcgSession(s.startedAt);
     setSessions((prev) => prev.filter((x) => x.startedAt !== s.startedAt));
+  };
+
+  const confirmDeleteReport = (item: SessionWithReport) => {
+    Alert.alert(
+      'Borrar sesión',
+      'Se eliminará esta sesión con todas sus lecturas y eventos. Esta acción no se puede deshacer.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Borrar',
+          style: 'destructive',
+          onPress: () => {
+            void deleteSessionCascade(item.session.id)
+              .then(() => {
+                setItems((prev) => {
+                  const next = prev.filter(
+                    (x) => x.session.id !== item.session.id,
+                  );
+                  setWeekly(
+                    buildWeeklyReport(
+                      next.map((i) => i.report),
+                      Date.now(),
+                    ),
+                  );
+                  return next;
+                });
+              })
+              .catch(() => {});
+          },
+        },
+      ],
+    );
   };
 
   // FC tab: session cards flattened under collapsible week headers.
@@ -1095,6 +1148,7 @@ export default function ReportsScreen() {
                     onDeleteStrip={deleteStrip}
                     onExportSession={exportSession}
                     onDeleteSession={deleteSessionRec}
+                    onDeleteReport={confirmDeleteReport}
                   />
                 )
               }
@@ -1177,7 +1231,9 @@ export default function ReportsScreen() {
                 sale de la propia curva de FC, sin acelerómetro.
               </ThemedText>
             }
-            renderItem={({ item }) => <SleepCard item={item} />}
+            renderItem={({ item }) => (
+              <SleepCard item={item} onDelete={confirmDeleteReport} />
+            )}
           />
         )}
       </SafeAreaView>

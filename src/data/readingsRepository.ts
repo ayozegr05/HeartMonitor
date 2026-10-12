@@ -266,6 +266,14 @@ export async function deleteSession(sessionId: number): Promise<void> {
   await getDb().delete(sessions).where(eq(sessions.id, sessionId));
 }
 
+/** Deletes a session plus its readings and events — used by long-press delete in Informes. */
+export async function deleteSessionCascade(sessionId: number): Promise<void> {
+  const db = getDb();
+  await db.delete(readings).where(eq(readings.sessionId, sessionId));
+  await db.delete(events).where(eq(events.sessionId, sessionId));
+  await db.delete(sessions).where(eq(sessions.id, sessionId));
+}
+
 /** Full-table reads for the manual backup export. */
 export async function getAllReadings() {
   return getDb().select().from(readings).orderBy(readings.timestamp);
