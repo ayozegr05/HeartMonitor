@@ -84,7 +84,7 @@ export class GarminAuthError extends Error {
 }
 
 async function fetchConsumer(): Promise<Oauth1Consumer> {
-  const res = await fetch(CONSUMER_URL);
+  const res = await fetch(CONSUMER_URL, { headers: { 'User-Agent': UA_BROWSER } });
   if (!res.ok) throw new GarminAuthError('No se pudo obtener el consumer OAuth', 'network');
   const j = (await res.json()) as { consumer_key: string; consumer_secret: string };
   return { key: j.consumer_key, secret: j.consumer_secret };
@@ -95,9 +95,37 @@ async function fetchTicket(
   email: string,
   password: string,
 ): Promise<string> {
+  let cookie = '';
+  const captureCookies = (res: Response) => {
+    const raw = res.headers.get('set-cookie');
+    if (!raw) return;
+    const next = raw
+      .split(/,(?=[^;,]+=)/)
+      .map((part) => part.split(';', 1)[0].trim())
+      .filter(Boolean);
+    const jar = new Map(
+      cookie
+        .split(';')
+        .map((part) => part.trim().split('=', 2))
+        .filter(([name, value]) => name && value)
+        .map(([name, value]) => [name, `${name}=${value}`]),
+    );
+    for (const entry of next) {
+      const name = entry.slice(0, entry.indexOf('='));
+      if (name) jar.set(name, entry);
+    }
+    cookie = [...jar.values()].join('; ');
+  };
+  const cookieHeaders = (): Record<string, string> =>
+    cookie ? { Cookie: cookie } : {};
+
   // Step 1: seeds the SSO session cookie.
   const step1 = `${SSO_EMBED}?${qs({ clientId: 'GarminConnect', locale: 'en', service: GC_MODERN })}`;
-  await fetch(step1, { headers: { 'User-Agent': UA_BROWSER } });
+  captureCookies(
+    await fetch(step1, {
+      headers: { 'User-Agent': UA_BROWSER, ...cookieHeaders() },
+    }),
+  );
 
   // Step 2: the sign-in widget page carries the _csrf hidden field.
   const step2 = `${SIGNIN_URL}?${qs({
@@ -106,9 +134,11 @@ async function fetchTicket(
     locale: 'en',
     gauthHost: SSO_EMBED,
   })}`;
-  const page = await fetch(step2, { headers: { 'User-Agent': UA_BROWSER } }).then((r) =>
-    r.text(),
-  );
+  const signinPage = await fetch(step2, {
+    headers: { 'User-Agent': UA_BROWSER, ...cookieHeaders() },
+  });
+  captureCookies(signinPage);
+  const page = await signinPage.text();
   const csrf = /name="_csrf"\s+value="(.+?)"/.exec(page)?.[1];
   if (!csrf) throw new GarminAuthError('Garmin cambió la página de login (sin csrf)', 'network');
 
@@ -134,9 +164,11 @@ async function fetchTicket(
       Origin: SSO_ORIGIN,
       Referer: step2,
       'User-Agent': UA_BROWSER,
+      ...cookieHeaders(),
     },
     body,
   });
+  captureCookies(res);
   const html = await res.text();
 
   const locked = /var status\s*=\s*"([^"]*)"/.exec(html)?.[1];

@@ -513,7 +513,17 @@ function GarminCard({
   onConnect: () => void;
 }) {
   const theme = useTheme();
-  const latest = series?.points.at(-1);
+  // The newest calendar point is often "today" with steps/FC but no
+  // overnight summary yet. Show the newest point that actually has night data.
+  const latest = [...(series?.points ?? [])]
+    .reverse()
+    .find(
+      (p) =>
+        p.sleep ||
+        p.hrvRmssdMs !== undefined ||
+        p.spo2AvgPct !== undefined ||
+        p.respirationPerMin !== undefined,
+    );
   const hasData = (series?.points.length ?? 0) > 0;
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
@@ -655,7 +665,7 @@ const dayKeyOf = (ms: number): string => {
 
 /**
  * VFC comparativa: nuestra banda (verde) vs el reloj (azul), barra por día.
- * Solo aparece cuando el reloj ha publicado VFC en Health Connect.
+ * El reloj puede venir de Health Connect o de la cuenta Garmin Connect.
  */
 function WatchVsBandTrend({
   items,
@@ -747,6 +757,148 @@ function WatchVsBandTrend({
           lo que importa.
         </ThemedText>
       )}
+    </ThemedView>
+  );
+}
+
+function sleepDurationMs(point: GarminDayPoint): number | null {
+  if (!point.sleep) return null;
+  const duration = point.sleep.endedAt - point.sleep.startedAt;
+  return duration > 0 ? duration : null;
+}
+
+function trendWord(values: number[]): 'mejor' | 'igual' | 'peor' | null {
+  if (values.length < 4) return null;
+  const split = Math.floor(values.length / 2);
+  const previous = values.slice(0, split);
+  const recent = values.slice(split);
+  const avg = (xs: number[]) =>
+    xs.reduce((sum, value) => sum + value, 0) / xs.length;
+  const delta = avg(recent) - avg(previous);
+  return delta > 20 * 60 * 1000
+    ? 'mejor'
+    : delta < -20 * 60 * 1000
+      ? 'peor'
+      : 'igual';
+}
+
+/** Sleep-duration trend from Garmin's nightly summaries, not a diagnosis. */
+function WatchSleepTrend({ watch }: { watch: GarminSeries | null }) {
+  const points = (watch?.points ?? [])
+    .map((point) => ({ point, duration: sleepDurationMs(point) }))
+    .filter(
+      (entry): entry is { point: GarminDayPoint; duration: number } =>
+        entry.duration !== null,
+    )
+    .slice(-14);
+  if (points.length === 0) return null;
+
+  const values = points.map((entry) => entry.duration);
+  const max = Math.max(...values, 8 * 60 * 60 * 1000);
+  const trend = trendWord(values);
+  const trendLabel =
+    trend === null
+      ? 'Aún hacen falta más noches para comparar'
+      : `Tendencia: ${trend}`;
+
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          Sueño del reloj
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          duración por noche · {trendLabel}
+        </ThemedText>
+      </ThemedView>
+      <View style={styles.trendRow}>
+        {points.map(({ point, duration }) => (
+          <View key={point.day} style={styles.trendPair}>
+            <View style={styles.trendPairBars}>
+              <View
+                style={[
+                  styles.trendBar,
+                  {
+                    height: Math.max(6, (duration / max) * 48),
+                    backgroundColor: '#8B5CF6',
+                  },
+                ]}
+              />
+            </View>
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              style={styles.trendPairLabel}>
+              {point.day.slice(8)}
+            </ThemedText>
+          </View>
+        ))}
+      </View>
+      <ThemedText type="small" themeColor="textSecondary">
+        Estimación basada en la duración que publica Garmin; no es una
+        puntuación médica de calidad del sueño.
+      </ThemedText>
+    </ThemedView>
+  );
+}
+
+/** SpO2 trend from the watch's nightly average and minimum. */
+function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
+  const points = (watch?.points ?? [])
+    .filter(
+      (point) =>
+        point.spo2AvgPct !== undefined || point.spo2MinPct !== undefined,
+    )
+    .slice(-14);
+  if (points.length === 0) return null;
+
+  const max = 100;
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          Oxígeno nocturno (SpO₂)
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          media / mínima
+        </ThemedText>
+      </ThemedView>
+      <View style={styles.trendRow}>
+        {points.map((point) => (
+          <View key={point.day} style={styles.trendPair}>
+            <View style={styles.trendPairBars}>
+              <View
+                style={[
+                  styles.trendBar,
+                  {
+                    height: `${Math.max(4, ((point.spo2AvgPct ?? 0) / max) * 100)}%`,
+                    backgroundColor: '#06B6D4',
+                  },
+                ]}
+              />
+              <View
+                style={[
+                  styles.trendBar,
+                  {
+                    height: `${Math.max(4, ((point.spo2MinPct ?? 0) / max) * 100)}%`,
+                    backgroundColor: '#F59E0B',
+                  },
+                ]}
+              />
+            </View>
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              style={styles.trendPairLabel}>
+              {point.day.slice(8)}
+            </ThemedText>
+          </View>
+        ))}
+      </View>
+      <ThemedText type="small" themeColor="textSecondary">
+        Cian = media · ámbar = mínima. Sirve para observar tendencias; una
+        lectura aislada no diagnostica apnea.
+      </ThemedText>
     </ThemedView>
   );
 }
@@ -1470,6 +1622,8 @@ export default function ReportsScreen() {
               <>
                 <GarminCard series={garmin} onConnect={connectGarmin} />
                 <WatchVsBandTrend items={items} watch={garmin} />
+                <WatchSleepTrend watch={garmin} />
+                <WatchSpo2Trend watch={garmin} />
                 <RmssdTrend />
               </>
             }

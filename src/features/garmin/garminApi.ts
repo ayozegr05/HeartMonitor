@@ -64,7 +64,11 @@ interface HrvSummary {
   avg: number;
 }
 
-/** /hrv-service/hrv/daily/{start}/{end} — one call covers the range. */
+/**
+ * /hrv-service/hrv/daily/{start}/{end} — one call covers the range.
+ * Garmin's calendarDate for lastNightAvg is the wake-day bucket, so it
+ * already matches the app convention; do not subtract a day here.
+ */
 async function fetchHrvRange(start: string, end: string): Promise<HrvSummary[]> {
   const data = (await garminGet(`/hrv-service/hrv/daily/${start}/${end}`)) as
     | Record<string, unknown>
@@ -263,8 +267,9 @@ export async function fetchGarminApiDays(
     if (e instanceof GarminAuthError) throw e;
   }
 
-  // Per-day vitals — last week only.
-  const perDay = Math.min(days, 7);
+  // Per-day vitals — enough history for the visible trend without issuing
+  // hundreds of private-API calls.
+  const perDay = Math.min(days, 14);
   for (let i = 0; i < perDay; i++) {
     const d = localDay(daysAgo(i));
     try {
@@ -274,8 +279,8 @@ export async function fetchGarminApiDays(
       if (e instanceof GarminAuthError) throw e;
     }
   }
-  // Rich sleep detail — last 3 nights only.
-  for (let i = 0; i < Math.min(days, 3); i++) {
+  // Rich sleep detail — two weeks, matching the visible trend window.
+  for (let i = 0; i < Math.min(days, 14); i++) {
     const d = localDay(daysAgo(i));
     try {
       merge(d, (await fetchSleepDetail(t.displayName, d)) ?? {});

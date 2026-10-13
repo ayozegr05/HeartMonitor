@@ -9,18 +9,29 @@
 const utf8 = (s: string): number[] => {
   const out: number[] = [];
   for (let i = 0; i < s.length; i++) {
-    let c = s.charCodeAt(i);
+    const first = s.charCodeAt(i);
+    let c = first;
     if (c < 0x80) out.push(c);
     else if (c < 0x800) {
       out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
     } else if (c >= 0xd800 && c <= 0xdbff) {
-      c = 0x10000 + ((c & 0x3ff) << 10) + (s.charCodeAt(++i) & 0x3ff);
-      out.push(
-        0xf0 | (c >> 18),
-        0x80 | ((c >> 12) & 63),
-        0x80 | ((c >> 6) & 63),
-        0x80 | (c & 63),
-      );
+      const second = s.charCodeAt(i + 1);
+      if (second >= 0xdc00 && second <= 0xdfff) {
+        i++;
+        c = 0x10000 + ((c & 0x3ff) << 10) + (second & 0x3ff);
+        out.push(
+          0xf0 | (c >> 18),
+          0x80 | ((c >> 12) & 63),
+          0x80 | ((c >> 6) & 63),
+          0x80 | (c & 63),
+        );
+      } else {
+        // WHATWG TextEncoder replaces an unpaired surrogate with U+FFFD.
+        out.push(0xef, 0xbf, 0xbd);
+      }
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      c = 0xfffd;
+      out.push(0xef, 0xbf, 0xbd);
     } else {
       out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
     }
@@ -137,7 +148,19 @@ export interface Oauth1Token {
 
 const randomNonce = (): string => {
   const bytes = new Array<number>(16);
-  for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  const cryptoApi = (
+    globalThis as {
+      crypto?: { getRandomValues?: (target: Uint8Array) => Uint8Array };
+    }
+  ).crypto;
+  if (cryptoApi?.getRandomValues) {
+    const secure = cryptoApi.getRandomValues(new Uint8Array(16));
+    for (let i = 0; i < secure.length; i++) bytes[i] = secure[i];
+  } else {
+    // Older Hermes runtimes have no Web Crypto. OAuth nonce uniqueness is
+    // still preserved as a fallback, but secure randomness is preferred.
+    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
   return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
 };
 

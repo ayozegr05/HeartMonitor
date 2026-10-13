@@ -42,7 +42,8 @@ reports next to the Health Connect data.
     sleep record (stages, overnight HRV, SpO2, respiration bundled)
   - `fetchGarminApiDays(days)` merges all of the above into
     `Partial<GarminDayPoint>` per day; per-day vitals calls are capped
-    at 7 days, sleep detail at 3, to bound request count.
+    at 14 days, sleep detail at 14, to provide a useful visible trend while
+    keeping private-API request count bounded.
 
 **Merge point**: `readGarminSeries` in
 `src/features/healthconnect/garminSummary.ts` — Health Connect reads run
