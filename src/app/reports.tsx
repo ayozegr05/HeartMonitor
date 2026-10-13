@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Alert, FlatList, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Alert, Animated, Easing, FlatList, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { HrChart } from '@/components/hr-chart';
@@ -517,6 +517,24 @@ function GarminCard({
   const [connectState, setConnectState] = useState<
     'idle' | 'loading' | 'done'
   >('idle');
+  const [fillAnim] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    if (connectState === 'loading') {
+      fillAnim.setValue(0);
+      Animated.timing(fillAnim, {
+        toValue: 0.9,
+        duration: 8000,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: false,
+      }).start();
+    } else if (connectState === 'done') {
+      Animated.timing(fillAnim, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: false,
+      }).start();
+    }
+  }, [connectState, fillAnim]);
   // The newest calendar point is often "today" with steps/FC but no
   // overnight summary yet. Show the newest point that actually has night data.
   const latest = [...(series?.points ?? [])]
@@ -621,9 +639,22 @@ function GarminCard({
                   connectState === 'done'
                     ? '#2E7D32'
                     : theme.backgroundSelected,
-                opacity: connectState === 'loading' ? 0.6 : 1,
+                overflow: 'hidden',
               },
             ]}>
+            <Animated.View
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: fillAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['0%', '100%'],
+                }),
+                backgroundColor: 'rgba(46, 125, 50, 0.55)',
+              }}
+            />
             <ThemedText type="smallBold">
               {connectState === 'loading'
                 ? 'Leyendo datos del reloj…'
@@ -742,7 +773,7 @@ function WatchVsBandTrend({
         </ThemedText>
       </ThemedView>
       <View style={styles.trendRow}>
-        <ChartAxis top={`${max} ms`} bottom="0" />
+        <ChartAxis labels={[`${max} ms`, `${Math.round(max / 2)} ms`, '0']} />
         {days.map((d, i) => {
           const ours = oursByDay.get(d);
           const theirs = watchByDay.get(d);
@@ -843,26 +874,80 @@ function SourceChips({
 const dayLabel = (day: string): string =>
   `${day.slice(8)}/${day.slice(5, 7)}`;
 
-/** Narrow Y-axis column for the mini bar charts: top and bottom scale labels. */
-function ChartAxis({ top, bottom }: { top: string; bottom: string }) {
+/** Narrow Y-axis column for the mini charts: scale labels top → bottom. */
+function ChartAxis({ labels }: { labels: string[] }) {
   const theme = useTheme();
   return (
     <View style={[styles.trendPair, { flex: 0, width: 30 }]}>
       <View style={[styles.trendPairBars, styles.axisCol]}>
-        <ThemedText
-          type="small"
-          style={[styles.axisLabel, { color: theme.textSecondary }]}>
-          {top}
-        </ThemedText>
-        <ThemedText
-          type="small"
-          style={[styles.axisLabel, { color: theme.textSecondary }]}>
-          {bottom}
-        </ThemedText>
+        {labels.map((l, i) => (
+          <ThemedText
+            key={i}
+            type="small"
+            style={[styles.axisLabel, { color: theme.textSecondary }]}>
+            {l}
+          </ThemedText>
+        ))}
       </View>
       <ThemedText type="small" style={styles.trendPairLabel}>
         {' '}
       </ThemedText>
+    </View>
+  );
+}
+
+/** Line + dots chart drawn with plain views — one point per night. */
+function NightLine({ fracs, color }: { fracs: number[]; color: string }) {
+  const H = 96;
+  const [w, setW] = useState(0);
+  const n = fracs.length;
+  const pts = fracs.map((f, i) => ({
+    x: (i + 0.5) / Math.max(n, 1),
+    y: 1 - f,
+  }));
+  return (
+    <View
+      style={{ flex: 1, height: H }}
+      onLayout={(e) => setW(e.nativeEvent.layout.width)}>
+      {w > 0 &&
+        pts.map((p, i) => {
+          const cx = p.x * w;
+          const cy = p.y * H;
+          let seg = null;
+          if (i > 0) {
+            const px = pts[i - 1].x * w;
+            const py = pts[i - 1].y * H;
+            const dx = cx - px;
+            const dy = cy - py;
+            const len = Math.hypot(dx, dy);
+            const angle = Math.atan2(dy, dx);
+            seg = (
+              <View
+                style={[
+                  styles.lineSeg,
+                  {
+                    left: (px + cx) / 2 - len / 2,
+                    top: (py + cy) / 2 - 1,
+                    width: len,
+                    backgroundColor: color,
+                    transform: [{ rotate: `${angle}rad` }],
+                  },
+                ]}
+              />
+            );
+          }
+          return (
+            <Fragment key={i}>
+              {seg}
+              <View
+                style={[
+                  styles.lineDot,
+                  { left: cx - 3, top: cy - 3, backgroundColor: color },
+                ]}
+              />
+            </Fragment>
+          );
+        })}
     </View>
   );
 }
@@ -1173,30 +1258,24 @@ function WatchSleepTrend({ watch }: { watch: GarminSeries | null }) {
       <View style={styles.rangeRow}>{chips}</View>
       {modal}
       <View style={styles.trendRow}>
-        <ChartAxis top={`${Math.round(max / 3600000)} h`} bottom="0" />
-        {points.map(({ point, duration }, i) => (
-          <View key={point.day} style={styles.trendPair}>
-            <View style={styles.trendPairBars}>
-              <View
-                style={[
-                  styles.trendBar,
-                  {
-                    height: `${Math.max(8, (duration / max) * 100)}%`,
-                    backgroundColor: '#8B5CF6',
-                  },
-                ]}
-              />
-            </View>
-            <View style={styles.dateTick}>
+        <ChartAxis labels={[`${Math.round(max / 3600000)} h`, `${Math.round((max / 3600000) * (2 / 3))} h`, `${Math.round(max / 3600000 / 3)} h`, '0']} />
+        <View style={{ flex: 1 }}>
+          <NightLine
+            fracs={points.map((e) => Math.min(1, e.duration / max))}
+            color="#8B5CF6"
+          />
+          <View style={styles.dateRow}>
+            {points.map(({ point }) => (
               <ThemedText
+                key={point.day}
                 type="small"
                 themeColor="textSecondary"
                 style={styles.dateTickText}>
                 {wdLabel(point.day)}
               </ThemedText>
-            </View>
+            ))}
           </View>
-        ))}
+        </View>
       </View>
       {points.length === 0 ? (
         <ThemedText type="small" themeColor="textSecondary">
@@ -1283,37 +1362,36 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
         </ThemedText>
       ) : (
       <View style={styles.trendRow}>
-        <ChartAxis top="100%" bottom={`${floor}%`} />
-        {points.map((point, i) => {
-          const v =
-            (mode === 'min'
-              ? (point.spo2MinPct ?? point.spo2AvgPct)
-              : point.spo2AvgPct) ?? floor;
-          const color = v >= 92 ? '#2E7D32' : v >= 88 ? '#F59E0B' : '#E5484D';
-          return (
-          <View key={point.day} style={styles.trendPair}>
-            <View style={styles.trendPairBars}>
-              <View
-                style={[
-                  styles.trendBar,
-                  {
-                    height: `${Math.max(4, ((v - floor) / span) * 100)}%`,
-                    backgroundColor: color,
-                  },
-                ]}
-              />
-            </View>
-            <View style={styles.dateTick}>
+        <ChartAxis labels={['100%', `${Math.round(100 - (100 - floor) / 3)}%`, `${Math.round(100 - ((100 - floor) * 2) / 3)}%`, `${floor}%`]} />
+        <View style={{ flex: 1 }}>
+          <NightLine
+            fracs={points.map((point) =>
+              Math.max(
+                0,
+                Math.min(
+                  1,
+                  (((mode === 'min'
+                    ? (point.spo2MinPct ?? point.spo2AvgPct)
+                    : point.spo2AvgPct) ?? floor) -
+                    floor) /
+                    span,
+                ),
+              ),
+            )}
+            color={mode === 'min' ? '#F59E0B' : '#38BDF8'}
+          />
+          <View style={styles.dateRow}>
+            {points.map((point) => (
               <ThemedText
+                key={point.day}
                 type="small"
                 themeColor="textSecondary"
                 style={styles.dateTickText}>
                 {wdLabel(point.day)}
               </ThemedText>
-            </View>
+            ))}
           </View>
-          );
-        })}
+        </View>
       </View>
       )}
       <ThemedText type="small" themeColor="textSecondary">
@@ -1679,7 +1757,7 @@ function RmssdTrend() {
       ) : (
         <>
           <View style={styles.trendRow}>
-            <ChartAxis top={`${max} ms`} bottom="0" />
+            <ChartAxis labels={[`${max} ms`, `${Math.round(max / 2)} ms`, '0']} />
             {bars.map((b) => (
               <View
                 key={b.key}
@@ -2431,7 +2509,15 @@ const styles = StyleSheet.create({
   },
   axisLabel: { fontSize: 9, lineHeight: 11 },
   dateTick: { width: '100%', height: 13, overflow: 'visible' },
-  dateTickText: { fontSize: 8, width: '100%', textAlign: 'center' },
+  dateTickText: { fontSize: 8, flex: 1, textAlign: 'center' },
+  dateRow: { flexDirection: 'row', marginTop: 2 },
+  lineDot: {
+    position: 'absolute',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  lineSeg: { position: 'absolute', height: 2, borderRadius: 1 },
   rangeRow: {
     flexDirection: 'row',
     alignItems: 'center',
