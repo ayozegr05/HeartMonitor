@@ -772,7 +772,7 @@ function WatchVsBandTrend({
                 type="small"
                 themeColor="textSecondary"
                 style={styles.trendPairLabel}>
-                {i % 2 === 0 || i === days.length - 1 ? dayLabel(d) : ''}
+                {i % 3 === 0 || i === days.length - 1 ? dayLabel(d) : ''}
               </ThemedText>
             </View>
           );
@@ -951,7 +951,7 @@ function WatchSleepTrend({ watch }: { watch: GarminSeries | null }) {
               type="small"
               themeColor="textSecondary"
               style={styles.trendPairLabel}>
-              {i % 2 === 0 || i === points.length - 1 ? dayLabel(point.day) : ''}
+              {i % 3 === 0 || i === points.length - 1 ? dayLabel(point.day) : ''}
             </ThemedText>
           </View>
         ))}
@@ -1021,7 +1021,7 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
               type="small"
               themeColor="textSecondary"
               style={styles.trendPairLabel}>
-              {i % 2 === 0 || i === points.length - 1 ? dayLabel(point.day) : ''}
+              {i % 3 === 0 || i === points.length - 1 ? dayLabel(point.day) : ''}
             </ThemedText>
           </View>
         ))}
@@ -1154,19 +1154,39 @@ function SleepPhasesBar({ stages }: { stages: GarminSleepSummary['stagesMs'] }) 
   );
 }
 
-/** Plain-language note about the night's phase mix (reference ranges). */
+/**
+ * Plain-language note about the night's phase mix vs typical adult ranges
+ * (deep 15–25% = physical recovery; REM 20–25% = dreaming/memory; awake
+ * <10–15%). Explain what each deviation means, not just "more/less".
+ */
 function phasePhrase(stages: GarminSleepSummary['stagesMs']): string | null {
   const total = stages.deep + stages.rem + stages.light + stages.awake;
   if (total <= 0) return null;
-  const pct = (ms: number) => (ms / total) * 100;
-  const notes: string[] = [];
-  if (pct(stages.deep) < 12) notes.push('poco profundo');
-  if (pct(stages.deep) > 28) notes.push('mucho profundo');
-  if (pct(stages.rem) < 15) notes.push('poco REM');
-  if (pct(stages.awake) > 15) notes.push('bastante tiempo despierto');
-  return notes.length === 0
-    ? 'Fases dentro de lo habitual.'
-    : `Fases: ${notes.join(', ')} respecto a lo habitual.`;
+  const pct = (ms: number) => Math.round((ms / total) * 100);
+  const parts: string[] = [];
+  const deep = pct(stages.deep);
+  parts.push(
+    `profundo ${deep}% (habitual 15–25% — recuperación física` +
+      (deep > 28
+        ? ', alto: noche muy reparadora o recuperación de déficit'
+        : deep < 12
+          ? ', bajo: descanso físico limitado'
+          : '') +
+      ')',
+  );
+  const rem = pct(stages.rem);
+  parts.push(
+    `REM ${rem}% (habitual 20–25% — sueño de soñar/memoria` +
+      (rem < 15
+        ? ', bajo: típico de noches cortas o con despertares al final'
+        : '') +
+      ')',
+  );
+  const awake = pct(stages.awake);
+  if (awake > 15) {
+    parts.push(`despierto ${awake}% — noche bastante interrumpida`);
+  }
+  return `Fases: ${parts.join(' · ')}.`;
 }
 
 /** Watch morning report — same shape as the band's informe matutino. */
