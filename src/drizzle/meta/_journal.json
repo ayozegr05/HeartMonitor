@@ -22,6 +22,13 @@
       "when": 1791817394001,
       "tag": "0002_session_rmssd",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791880084219,
+      "tag": "0003_garmin_days",
+      "breakpoints": true
     }
   ]
 }

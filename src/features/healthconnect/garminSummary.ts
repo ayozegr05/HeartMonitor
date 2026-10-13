@@ -5,6 +5,10 @@ import {
   requestPermission,
 } from 'react-native-health-connect';
 
+import { gte } from 'drizzle-orm';
+
+import { getDb } from '@/data/db';
+import { garminDays } from '@/data/schema';
 import { fetchGarminApiDays } from '@/features/garmin/garminApi';
 
 import { healthConnectStatus } from './healthConnectSync';
@@ -321,6 +325,29 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
     }
   } catch { /* ignore */ }
 
+  // Persisted account data from earlier reads — applied over Health
+  // Connect so older days stay visible even when the live API window
+  // (or a failed login) doesn't reach them.
+  const overlay = (day: string, ap: Partial<GarminDayPoint>) => {
+    const p = point(day);
+    Object.assign(
+      p,
+      Object.fromEntries(
+        Object.entries(ap).filter(([, v]) => v !== undefined),
+      ),
+    );
+  };
+  try {
+    const stored = await getDb()
+      .select()
+      .from(garminDays)
+      .where(gte(garminDays.day, dayKey(Date.now() - days * 86_400_000)));
+    for (const row of stored) {
+      overlay(row.day, JSON.parse(row.payload) as Partial<GarminDayPoint>);
+    }
+    if (stored.length > 0 && source === null) source = 'cuenta Garmin';
+  } catch { /* tabla aún no migrada o base de datos no disponible */ }
+
   // Direct Garmin Connect account read — fills the vitals Garmin never
   // writes to Health Connect (VFC, SpO2, respiration) plus resting HR,
   // steps and sleep stages. API values win where both sources have data.
@@ -328,18 +355,24 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
     const apiDays = await fetchGarminApiDays(days);
     if (apiDays && apiDays.size > 0) {
       for (const [day, ap] of apiDays) {
-        const p = point(day);
-        Object.assign(
-          p,
-          Object.fromEntries(
-            Object.entries(ap).filter(([, v]) => v !== undefined),
-          ),
-        );
+        overlay(day, ap);
       }
       source = 'cuenta Garmin';
+      // Cache the merged day so later reads don't need the network.
+      const now = Date.now();
+      const db = getDb();
+      for (const [day, ap] of apiDays) {
+        await db
+          .insert(garminDays)
+          .values({ day, payload: JSON.stringify(ap), fetchedAt: now })
+          .onConflictDoUpdate({
+            target: garminDays.day,
+            set: { payload: JSON.stringify(ap), fetchedAt: now },
+          });
+      }
     }
   } catch {
-    // Token caducado u offline — los datos de Health Connect ya sirven.
+    // Token caducado u offline — Health Connect + caché ya sirven.
   }
 
   const points = [...byDay.values()].sort((a, b) =>

@@ -66,3 +66,18 @@ export const events = sqliteTable(
     index('idx_events_session').on(t.sessionId),
   ],
 );
+
+/**
+ * Daily watch metrics pulled from the Garmin Connect account (and Health
+ * Connect), persisted so trends survive offline reads and grow over time
+ * beyond the bounded API window. One row per wake-day; payload is the
+ * JSON-serialized GarminDayPoint.
+ */
+export const garminDays = sqliteTable('garmin_days', {
+  /** Local wake day, YYYY-MM-DD. */
+  day: text('day').primaryKey(),
+  /** JSON-serialized Partial<GarminDayPoint>. */
+  payload: text('payload').notNull(),
+  /** Unix ms when this row was last refreshed. */
+  fetchedAt: integer('fetched_at').notNull(),
+});
