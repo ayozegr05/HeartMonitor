@@ -872,6 +872,11 @@ function SourceChips({
 }
 
 /** '14/10' — day/month so chart labels read as dates. */
+const dayOf = (ts: number): string => {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 const dayLabel = (day: string): string =>
   `${day.slice(8)}/${day.slice(5, 7)}`;
 
@@ -1670,23 +1675,25 @@ function WatchMorningCard({
   );
 }
 
-/** One "candle" per night: vertical bar from FC min to max + mean marker. */
-function FcCandleTrend({
+/** FC trend: double line (máx/mín) + thin resting/mean line. */
+function FcLineTrend({
   title,
   entries,
   midNote,
+  nr,
 }: {
   title: string;
   entries: { key: string; day: string; min: number; max: number; mid: number | null }[];
   midNote: string;
+  nr: ReturnType<typeof useNightRange>;
 }) {
-  const { range, custom, chips, modal } = useNightRange();
-  const data = rangeFilter(entries, range, custom);
+  const data = rangeFilter(entries, nr.range, nr.custom);
   if (entries.length === 0) return null;
   const lo = data.length ? Math.floor(Math.min(...data.map((d) => d.min))) : 40;
   const hi = data.length ? Math.ceil(Math.max(...data.map((d) => d.max))) : 100;
   const span = Math.max(hi - lo, 10);
   const mid = Math.round((hi + lo) / 2);
+  const frac = (v: number) => Math.max(0, Math.min(1, (v - lo) / span));
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
       <ThemedView style={styles.cardHeader}>
@@ -1697,84 +1704,106 @@ function FcCandleTrend({
           {rangeCaption(data)}
         </ThemedText>
       </ThemedView>
-      <View style={styles.rangeRow}>{chips}</View>
-      {modal}
+      <View style={styles.rangeRow}>{nr.chips}</View>
+      {nr.modal}
       {data.length === 0 ? (
         <ThemedText type="small" themeColor="textSecondary">
           Sin noches en este rango.
         </ThemedText>
       ) : (
         <View style={styles.trendRow}>
-          <ChartAxis
-            labels={[`${hi}`, `${mid}`, `${lo} bpm`]}
-          />
-          {data.map((d) => (
-            <View key={d.key} style={styles.trendPair}>
-              <View style={styles.candleCol}>
-                <View
-                  style={[
-                    styles.candleBar,
-                    {
-                      bottom: `${((d.min - lo) / span) * 100}%`,
-                      height: `${Math.max(4, ((d.max - d.min) / span) * 100)}%`,
-                    },
-                  ]}
+          <ChartAxis labels={[`${hi}`, `${mid}`, `${lo} bpm`]} />
+          <View style={{ flex: 1 }}>
+            <View style={{ height: 96 }}>
+              <View style={StyleSheet.absoluteFill}>
+                <NightLine
+                  fracs={data.map((d) => frac(d.max))}
+                  color="#E5484D"
                 />
-                {d.mid !== null && (
-                  <View
-                    style={[
-                      styles.candleDot,
-                      {
-                        bottom: `${((d.mid - lo) / span) * 100}%`,
-                      },
-                    ]}
-                  />
-                )}
               </View>
-              <View style={styles.dateTick}>
+              <View style={StyleSheet.absoluteFill}>
+                <NightLine
+                  fracs={data.map((d) => frac(d.min))}
+                  color="#93C5FD"
+                />
+              </View>
+              {data.some((d) => d.mid !== null) && (
+                <View style={StyleSheet.absoluteFill}>
+                  <NightLine
+                    fracs={data.map((d) => frac(d.mid ?? lo))}
+                    color="#F5F5F5"
+                  />
+                </View>
+              )}
+            </View>
+            <View style={styles.dateRow}>
+              {data.map((d) => (
                 <ThemedText
+                  key={d.key}
                   type="small"
                   themeColor="textSecondary"
                   style={styles.dateTickText}>
                   {wdLabel(d.day)}
                 </ThemedText>
-              </View>
+              ))}
             </View>
-          ))}
+          </View>
         </View>
       )}
       <ThemedText type="small" themeColor="textSecondary">
-        Barra = rango de FC (mín–máx) · punto = {midNote}
+        <ThemedText type="small" style={{ color: '#E5484D' }}>—</ThemedText>{' '}
+        máxima ·{' '}
+        <ThemedText type="small" style={{ color: '#93C5FD' }}>—</ThemedText>{' '}
+        mínima ·{' '}
+        <ThemedText type="small" style={{ color: '#F5F5F5' }}>—</ThemedText>{' '}
+        {midNote}
       </ThemedText>
     </ThemedView>
   );
 }
 
-function WatchFcTrend({ watch }: { watch: GarminSeries | null }) {
+function WatchFcTrend({
+  watch,
+  nr,
+}: {
+  watch: GarminSeries | null;
+  nr: ReturnType<typeof useNightRange>;
+}) {
   const entries = (watch?.points ?? [])
-    .filter((p) => p.hrMinBpm !== undefined || p.hrMaxBpm !== undefined)
+    .filter(
+      (p) =>
+        p.hrMinBpm !== undefined ||
+        p.hrMaxBpm !== undefined ||
+        p.hrAvgBpm !== undefined,
+    )
     .map((p) => ({
       key: p.day,
       day: p.day,
-      min: p.hrMinBpm ?? p.hrMaxBpm!,
-      max: p.hrMaxBpm ?? p.hrMinBpm!,
-      mid: p.restingBpm ?? null,
+      min: p.hrMinBpm ?? p.hrAvgBpm ?? p.hrMaxBpm!,
+      max: p.hrMaxBpm ?? p.hrAvgBpm ?? p.hrMinBpm!,
+      mid: p.hrAvgBpm ?? p.restingBpm ?? null,
     }));
   return (
-    <FcCandleTrend
+    <FcLineTrend
       title="FC del día por jornada · reloj"
       entries={entries}
-      midNote="FC en reposo"
+      midNote="media"
+      nr={nr}
     />
   );
 }
 
-function BandFcTrend({ items }: { items: SessionWithReport[] }) {
+function BandFcTrend({
+  items,
+  nr,
+}: {
+  items: SessionWithReport[];
+  nr: ReturnType<typeof useNightRange>;
+}) {
   const entries = [...items]
     .filter((i) => i.report.minBpm !== null && i.report.maxBpm !== null)
     .map((i) => {
-      const d = new Date(i.session.endedAt ?? i.session.startedAt);
-      const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const day = dayOf(i.session.endedAt ?? i.session.startedAt);
       return {
         key: `b${i.session.id}`,
         day,
@@ -1785,10 +1814,11 @@ function BandFcTrend({ items }: { items: SessionWithReport[] }) {
     })
     .sort((a, b) => a.day.localeCompare(b.day));
   return (
-    <FcCandleTrend
+    <FcLineTrend
       title="FC por sesión · banda"
       entries={entries}
-      midNote="FC media de la sesión"
+      midNote="media de la sesión"
+      nr={nr}
     />
   );
 }
@@ -1796,9 +1826,12 @@ function BandFcTrend({ items }: { items: SessionWithReport[] }) {
 /** Watch-day row for the FC tab: daily HR range, resting HR and steps. */
 function WatchDayCard({ point }: { point: GarminDayPoint }) {
   const bits: string[] = [];
-  if (point.hrMinBpm !== undefined || point.hrMaxBpm !== undefined) {
-    bits.push(`❤️ FC día ${point.hrMinBpm ?? '?'}–${point.hrMaxBpm ?? '?'} bpm`);
-  }
+  if (point.hrMinBpm !== undefined || point.hrMaxBpm !== undefined)
+    bits.push(
+      `❤️ mín ${point.hrMinBpm ?? '?'}` +
+        (point.hrAvgBpm !== undefined ? ` · media ${point.hrAvgBpm}` : '') +
+        ` · máx ${point.hrMaxBpm ?? '?'} bpm`,
+    );
   if (point.restingBpm !== undefined) {
     bits.push(`🛌 reposo ${point.restingBpm} bpm`);
   }
@@ -2121,6 +2154,8 @@ export default function ReportsScreen() {
   const [source, setSource] = useState<'reloj' | 'banda'>('reloj');
 
   const nightListRange = useNightRange('7');
+  const fcWatchRange = useNightRange('7');
+  const fcBandRange = useNightRange('7');
 
   /** Watch nights, newest first — every day with overnight data. */
   const allWatchPoints = (garmin?.points ?? []).filter(
@@ -2131,6 +2166,13 @@ export default function ReportsScreen() {
       p.respirationPerMin !== undefined,
   );
   const watchRows = allWatchPoints
+    .map((p) => ({ key: `w${p.day}`, point: p }))
+    .reverse();
+  const fcWatchRows = rangeFilter(
+    allWatchPoints,
+    fcWatchRange.range,
+    fcWatchRange.custom,
+  )
     .map((p) => ({ key: `w${p.day}`, point: p }))
     .reverse();
   /** Same nights bounded by the range chips on the Sueño list. */
@@ -2259,9 +2301,19 @@ export default function ReportsScreen() {
   const fcRows = ((): FcRow[] => {
     const rows: FcRow[] = [];
     let week: string | null = null;
-    const visible = onlyWithEvents
-      ? items.filter((i) => i.report.eventCount > 0)
-      : items;
+    const inRange = new Set(
+      rangeFilter(
+        items.map((i) => ({
+          day: dayOf(i.session.endedAt ?? i.session.startedAt),
+          item: i,
+        })),
+        fcBandRange.range,
+        fcBandRange.custom,
+      ).map((e) => e.item.session.id),
+    );
+    const visible = items
+      .filter((i) => inRange.has(i.session.id))
+      .filter((i) => (onlyWithEvents ? i.report.eventCount > 0 : true));
     for (const item of visible) {
       const w = weekLabel(item.session.startedAt);
       if (w !== week) {
@@ -2438,10 +2490,12 @@ export default function ReportsScreen() {
             <SourceChips source={source} onChange={setSource} />
             {source === 'reloj' ? (
               <FlatList
-                data={watchRows}
+                data={fcWatchRows}
                 keyExtractor={(r) => r.key}
                 contentContainerStyle={{ paddingBottom: BottomTabInset }}
-                ListHeaderComponent={<WatchFcTrend watch={garmin} />}
+                ListHeaderComponent={
+                  <WatchFcTrend watch={garmin} nr={fcWatchRange} />
+                }
                 ListEmptyComponent={
                   <ThemedText type="small" themeColor="textSecondary">
                     Sin días del reloj todavía — vincula tu cuenta Garmin en
@@ -2472,7 +2526,7 @@ export default function ReportsScreen() {
               data={fcRows}
               keyExtractor={(r) => r.key}
               contentContainerStyle={{ paddingBottom: BottomTabInset }}
-              ListHeaderComponent={<BandFcTrend items={items} />}
+              ListHeaderComponent={<BandFcTrend items={items} nr={fcBandRange} />}
               ListEmptyComponent={
                 <ThemedText type="small" themeColor="textSecondary">
                   {onlyWithEvents && items.length > 0

@@ -164,6 +164,8 @@ export interface GarminDayPoint {
   steps?: number;
   hrMaxBpm?: number;
   hrMinBpm?: number;
+  /** True daily average computed from the raw HC heart-rate samples. */
+  hrAvgBpm?: number;
 }
 
 export interface GarminSeries {
@@ -339,17 +341,26 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
     }
   } catch { /* ignore */ }
 
+  const hrSum = new Map<string, { sum: number; n: number }>();
   try {
     for (const r of await hcAll('HeartRate')) {
       const samples = r.samples as { beatsPerMinute: number }[] | undefined;
       if (!samples?.length) continue;
-      const p = point(dayKey(recStart(r)));
+      const day = dayKey(recStart(r));
+      const p = point(day);
+      const acc = hrSum.get(day) ?? { sum: 0, n: 0 };
       for (const s of samples) {
         const bpm = Math.round(s.beatsPerMinute);
         p.hrMaxBpm = p.hrMaxBpm === undefined ? bpm : Math.max(p.hrMaxBpm, bpm);
         p.hrMinBpm = p.hrMinBpm === undefined ? bpm : Math.min(p.hrMinBpm, bpm);
+        acc.sum += bpm;
+        acc.n += 1;
       }
+      hrSum.set(day, acc);
       see(r);
+    }
+    for (const [day, acc] of hrSum) {
+      if (acc.n > 0) point(day).hrAvgBpm = Math.round(acc.sum / acc.n);
     }
   } catch { /* ignore */ }
 
