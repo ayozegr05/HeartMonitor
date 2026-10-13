@@ -878,7 +878,7 @@ const dayOf = (ts: number): string => {
 };
 
 const dayLabel = (day: string): string =>
-  `${day.slice(8)}/${day.slice(5, 7)}`;
+  `${day.slice(8)}/${day.slice(5, 7)}/${day.slice(0, 4)}`;
 
 /** Narrow Y-axis column for the mini charts: scale labels top → bottom. */
 function ChartAxis({ labels }: { labels: string[] }) {
@@ -1694,6 +1694,7 @@ function FcLineTrend({
   const span = Math.max(hi - lo, 10);
   const mid = Math.round((hi + lo) / 2);
   const frac = (v: number) => Math.max(0, Math.min(1, (v - lo) / span));
+  const last = data.at(-1);
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
       <ThemedView style={styles.cardHeader}>
@@ -1704,7 +1705,9 @@ function FcLineTrend({
           {rangeCaption(data)}
         </ThemedText>
       </ThemedView>
-      <View style={styles.rangeRow}>{nr.chips}</View>
+      <View style={[styles.rangeRow, { marginBottom: Spacing.three }]}>
+        {nr.chips}
+      </View>
       {nr.modal}
       {data.length === 0 ? (
         <ThemedText type="small" themeColor="textSecondary">
@@ -1727,14 +1730,6 @@ function FcLineTrend({
                   color="#93C5FD"
                 />
               </View>
-              {data.some((d) => d.mid !== null) && (
-                <View style={StyleSheet.absoluteFill}>
-                  <NightLine
-                    fracs={data.map((d) => frac(d.mid ?? lo))}
-                    color="#F5F5F5"
-                  />
-                </View>
-              )}
             </View>
             <View style={styles.dateRow}>
               {data.map((d) => (
@@ -1758,6 +1753,13 @@ function FcLineTrend({
         <ThemedText type="small" style={{ color: '#F5F5F5' }}>—</ThemedText>{' '}
         {midNote}
       </ThemedText>
+      {last !== undefined && (
+        <ThemedText type="small" themeColor="textSecondary">
+          última: mín {last.min}
+          {last.mid !== null ? ` · media ${last.mid}` : ''} · máx {last.max}{' '}
+          bpm
+        </ThemedText>
+      )}
     </ThemedView>
   );
 }
@@ -1848,9 +1850,17 @@ function WatchDayCard({ point }: { point: GarminDayPoint }) {
           reloj
         </ThemedText>
       </ThemedView>
-      <ThemedText type="small">
-        {bits.length > 0 ? bits.join(' · ') : 'sin datos de FC este día'}
-      </ThemedText>
+      {bits.length > 0 ? (
+        bits.map((l, i) => (
+          <ThemedText key={i} type="small">
+            {l}
+          </ThemedText>
+        ))
+      ) : (
+        <ThemedText type="small" themeColor="textSecondary">
+          sin datos de FC este día
+        </ThemedText>
+      )}
     </ThemedView>
   );
 }
