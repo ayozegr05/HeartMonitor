@@ -768,12 +768,14 @@ function WatchVsBandTrend({
                   ]}
                 />
               </View>
-              <ThemedText
-                type="small"
-                themeColor="textSecondary"
-                style={styles.trendPairLabel}>
-                {i % 3 === 0 || i === days.length - 1 ? dayLabel(d) : ''}
-              </ThemedText>
+              <View style={styles.dateTick}>
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  style={styles.dateTickText}>
+                  {dayLabel(d)}
+                </ThemedText>
+              </View>
             </View>
           );
         })}
@@ -947,12 +949,14 @@ function WatchSleepTrend({ watch }: { watch: GarminSeries | null }) {
                 ]}
               />
             </View>
-            <ThemedText
-              type="small"
-              themeColor="textSecondary"
-              style={styles.trendPairLabel}>
-              {i % 3 === 0 || i === points.length - 1 ? dayLabel(point.day) : ''}
-            </ThemedText>
+            <View style={styles.dateTick}>
+              <ThemedText
+                type="small"
+                themeColor="textSecondary"
+                style={styles.dateTickText}>
+                {dayLabel(point.day)}
+              </ThemedText>
+            </View>
           </View>
         ))}
       </View>
@@ -969,6 +973,8 @@ function WatchSleepTrend({ watch }: { watch: GarminSeries | null }) {
 
 /** SpO2 trend from the watch's nightly average and minimum. */
 function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
+  const theme = useTheme();
+  const [mode, setMode] = useState<'min' | 'avg'>('min');
   const points = (watch?.points ?? [])
     .filter(
       (point) =>
@@ -993,44 +999,73 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
         <ThemedText type="smallBold" style={styles.cardTitle}>
           Oxígeno nocturno (SpO₂)
         </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          % de saturación por noche
-        </ThemedText>
+        <View style={styles.trendChips}>
+          {(
+            [
+              { key: 'min', label: 'mínima' },
+              { key: 'avg', label: 'media' },
+            ] as const
+          ).map((m) => (
+            <Pressable
+              key={m.key}
+              onPress={() => setMode(m.key)}
+              style={[
+                styles.trendChip,
+                mode === m.key && {
+                  backgroundColor: theme.backgroundSelected,
+                },
+              ]}>
+              <ThemedText
+                type="small"
+                themeColor={mode === m.key ? 'text' : 'textSecondary'}>
+                {m.label}
+              </ThemedText>
+            </Pressable>
+          ))}
+        </View>
       </ThemedView>
       <View style={styles.trendRow}>
         <ChartAxis top="100%" bottom={`${floor}%`} />
-        {points.map((point, i) => (
+        {points.map((point, i) => {
+          const v =
+            (mode === 'min'
+              ? (point.spo2MinPct ?? point.spo2AvgPct)
+              : point.spo2AvgPct) ?? floor;
+          const color = v >= 92 ? '#2E7D32' : v >= 88 ? '#F59E0B' : '#E5484D';
+          return (
           <View key={point.day} style={styles.trendPair}>
             <View style={styles.trendPairBars}>
               <View
                 style={[
                   styles.trendBar,
                   {
-                    height: `${Math.max(4, (((point.spo2MinPct ?? point.spo2AvgPct ?? floor) - floor) / span) * 100)}%`,
-                    backgroundColor:
-                      (point.spo2MinPct ?? point.spo2AvgPct ?? 0) >= 92
-                        ? '#2E7D32'
-                        : (point.spo2MinPct ?? point.spo2AvgPct ?? 0) >= 88
-                          ? '#F59E0B'
-                          : '#E5484D',
+                    height: `${Math.max(4, ((v - floor) / span) * 100)}%`,
+                    backgroundColor: color,
                   },
                 ]}
               />
             </View>
-            <ThemedText
-              type="small"
-              themeColor="textSecondary"
-              style={styles.trendPairLabel}>
-              {i % 3 === 0 || i === points.length - 1 ? dayLabel(point.day) : ''}
-            </ThemedText>
+            <View style={styles.dateTick}>
+              <ThemedText
+                type="small"
+                themeColor="textSecondary"
+                style={styles.dateTickText}>
+                {dayLabel(point.day)}
+              </ThemedText>
+            </View>
           </View>
-        ))}
+          );
+        })}
       </View>
       <ThemedText type="small" themeColor="textSecondary">
-        Una barra por noche = la <ThemedText type="smallBold">mínima</ThemedText>{' '}
+        Una barra por noche = la{' '}
+        <ThemedText type="smallBold">
+          {mode === 'min' ? 'mínima' : 'media'}
+        </ThemedText>{' '}
         de SpO₂ (verde ≥92% · ámbar 88–92% · rojo &lt;88%). Escala desde{' '}
-        {floor}%. última {lastMin !== undefined ? `${lastMin}` : lastAvg}%.
-        Sirve para tendencias; una lectura aislada no diagnostica apnea.
+        {floor}%. última{' '}
+        {mode === 'min' ? (lastMin ?? lastAvg) : lastAvg}%. Sirve para
+        tendencias; una lectura aislada no diagnostica apnea.
       </ThemedText>
     </ThemedView>
   );
@@ -2136,6 +2171,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   axisLabel: { fontSize: 9, lineHeight: 11 },
+  dateTick: { width: '100%', height: 24, overflow: 'visible' },
+  dateTickText: {
+    fontSize: 9,
+    width: 34,
+    transform: [{ rotate: '-45deg' }, { translateX: 6 }],
+  },
   phasesBar: {
     flexDirection: 'row',
     height: 14,
