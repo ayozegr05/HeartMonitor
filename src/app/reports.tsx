@@ -957,7 +957,7 @@ function NightLine({ fracs, color }: { fracs: number[]; color: string }) {
 const WD_INITIALS = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
 const wdLabel = (day: string) => {
   const d = new Date(`${day}T12:00:00`);
-  return `${WD_INITIALS[d.getDay()]} ${Number(day.slice(8))}`;
+  return `${WD_INITIALS[d.getDay()]}\n${Number(day.slice(8))}`;
 };
 
 type RangeKey = '7' | '14' | '30' | '90' | 'custom';
@@ -1197,13 +1197,13 @@ function RangeCalendarModal({
 }
 
 /** Shared range state for watch trend cards. */
-function useNightRange(): {
+function useNightRange(initial: RangeKey = '14'): {
   range: RangeKey;
   custom: [string, string] | null;
   chips: ReactNode;
   modal: ReactNode;
 } {
-  const [range, setRange] = useState<RangeKey>('14');
+  const [range, setRange] = useState<RangeKey>(initial);
   const [custom, setCustom] = useState<[string, string] | null>(null);
   const [calOpen, setCalOpen] = useState(false);
   const chips = (
@@ -1628,6 +1628,10 @@ function WatchMorningCard({
     lines.push(
       `🏃 FC del día ${point.hrMinBpm ?? '?'}–${point.hrMaxBpm ?? '?'} bpm`,
     );
+  if (point.steps !== undefined)
+    lines.push(
+      `🚶 ${point.steps.toLocaleString('es-ES')} pasos ese día`,
+    );
   const phrase = s ? phasePhrase(s.stagesMs) : null;
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
@@ -1674,9 +1678,6 @@ function WatchDayCard({ point }: { point: GarminDayPoint }) {
   }
   if (point.restingBpm !== undefined) {
     bits.push(`🛌 reposo ${point.restingBpm} bpm`);
-  }
-  if (point.steps !== undefined) {
-    bits.push(`👣 ${point.steps.toLocaleString('es-ES')} pasos`);
   }
   if (point.hrvRmssdMs !== undefined) {
     bits.push(`📈 VFC ${point.hrvRmssdMs} ms`);
@@ -1738,27 +1739,34 @@ function WatchNightCard({
       </ThemedView>
       {ws && (
         <ThemedText type="small">
-          {formatClock(ws.startedAt)} → {formatClock(ws.endedAt)} (
-          {formatDuration(ws.endedAt - ws.startedAt)})
-          {ws.stagesMs.deep + ws.stagesMs.light + ws.stagesMs.rem > 0 &&
-            ` · prof ${formatDuration(ws.stagesMs.deep)} REM ${formatDuration(ws.stagesMs.rem)} lig ${formatDuration(ws.stagesMs.light)}`}
+          😴 {formatClock(ws.startedAt)} → {formatClock(ws.endedAt)} ·{' '}
+          {formatDuration(ws.endedAt - ws.startedAt)}
         </ThemedText>
       )}
-      <ThemedText type="small" themeColor="textSecondary">
-        {[
-          point.hrvRmssdMs !== undefined && `VFC ${point.hrvRmssdMs} ms`,
-          point.restingBpm !== undefined && `reposo ${point.restingBpm} bpm`,
-          point.respirationPerMin !== undefined &&
-            `${Math.round(point.respirationPerMin)} respiraciones/min`,
-          point.spo2AvgPct !== undefined &&
-            `SpO2 ${Math.round(point.spo2AvgPct)}%` +
-              (point.spo2MinPct !== undefined
-                ? ` (mín ${Math.round(point.spo2MinPct)}%)`
-                : ''),
-        ]
-          .filter(Boolean)
-          .join(' · ')}
-      </ThemedText>
+      {ws &&
+        ws.stagesMs.deep + ws.stagesMs.light + ws.stagesMs.rem > 0 && (
+          <SleepPhasesBar stages={ws.stagesMs} />
+        )}
+      {[
+        point.hrvRmssdMs !== undefined && `📈 VFC ${point.hrvRmssdMs} ms`,
+        point.restingBpm !== undefined &&
+          `❤️ reposo ${point.restingBpm} bpm`,
+        point.respirationPerMin !== undefined &&
+          `🫁 ${Math.round(point.respirationPerMin)} respiraciones/min`,
+        point.spo2AvgPct !== undefined &&
+          `🩸 SpO₂ ${Math.round(point.spo2AvgPct)}%` +
+            (point.spo2MinPct !== undefined
+              ? ` (mín ${Math.round(point.spo2MinPct)}%)`
+              : ''),
+        (point.hrMinBpm !== undefined || point.hrMaxBpm !== undefined) &&
+          `🏃 FC día ${point.hrMinBpm ?? '?'}–${point.hrMaxBpm ?? '?'} bpm`,
+      ]
+        .filter(Boolean)
+        .map((l, i) => (
+          <ThemedText key={i} type="small" themeColor="textSecondary">
+            {l}
+          </ThemedText>
+        ))}
     </Pressable>
   );
 }
@@ -1989,15 +1997,25 @@ export default function ReportsScreen() {
   const [garmin, setGarmin] = useState<GarminSeries | null>(null);
   const [source, setSource] = useState<'reloj' | 'banda'>('reloj');
 
+  const nightListRange = useNightRange('7');
+
   /** Watch nights, newest first — every day with overnight data. */
-  const watchRows = (garmin?.points ?? [])
-    .filter(
-      (p) =>
-        p.sleep ||
-        p.hrvRmssdMs !== undefined ||
-        p.spo2AvgPct !== undefined ||
-        p.respirationPerMin !== undefined,
-    )
+  const allWatchPoints = (garmin?.points ?? []).filter(
+    (p) =>
+      p.sleep ||
+      p.hrvRmssdMs !== undefined ||
+      p.spo2AvgPct !== undefined ||
+      p.respirationPerMin !== undefined,
+  );
+  const watchRows = allWatchPoints
+    .map((p) => ({ key: `w${p.day}`, point: p }))
+    .reverse();
+  /** Same nights bounded by the range chips on the Sueño list. */
+  const nightRows = rangeFilter(
+    allWatchPoints,
+    nightListRange.range,
+    nightListRange.custom,
+  )
     .map((p) => ({ key: `w${p.day}`, point: p }))
     .reverse();
 
@@ -2429,7 +2447,7 @@ export default function ReportsScreen() {
             <SourceChips source={source} onChange={setSource} />
             {source === 'reloj' ? (
               <FlatList
-                data={watchRows}
+                data={nightRows}
                 keyExtractor={(r) => r.key}
                 contentContainerStyle={{ paddingBottom: BottomTabInset }}
                 ListHeaderComponent={
@@ -2440,6 +2458,15 @@ export default function ReportsScreen() {
                     <WatchSleepTrend watch={garmin} />
                     <WatchSpo2Trend watch={garmin} />
                     <WatchVsBandTrend items={items} watch={garmin} />
+                    <View style={styles.rangeRow}>
+                      {nightListRange.chips}
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {rangeCaption(
+                          nightRows.map((r) => r.point),
+                        )}
+                      </ThemedText>
+                    </View>
+                    {nightListRange.modal}
                   </>
                 }
                 ListEmptyComponent={
@@ -2599,8 +2626,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   axisLabel: { fontSize: 9, lineHeight: 11 },
-  dateTick: { width: '100%', height: 13, overflow: 'visible' },
-  dateTickText: { fontSize: 8, flex: 1, textAlign: 'center' },
+  dateTick: { width: '100%', height: 24, overflow: 'visible' },
+  dateTickText: { fontSize: 8, flex: 1, textAlign: 'center', lineHeight: 10 },
   dateRow: { flexDirection: 'row', marginTop: 2 },
   lineDot: {
     position: 'absolute',
