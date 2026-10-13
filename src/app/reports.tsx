@@ -1537,6 +1537,17 @@ export default function ReportsScreen() {
                   watch={garmin}
                   weekly={weekly}
                 />
+                {(garmin?.points.length ?? 0) > 0 && (
+                  <>
+                    <ThemedText type="smallBold" style={styles.sectionTitle}>
+                      ⌚ Reloj — informe de la última noche
+                    </ThemedText>
+                    <GarminCard series={garmin} onConnect={connectGarmin} />
+                  </>
+                )}
+                <ThemedText type="smallBold" style={styles.sectionTitle}>
+                  💚 Banda
+                </ThemedText>
                 {/* Morning report — tap to read the night's verdict */}
                 <ThemedView type="backgroundElement" style={styles.card}>
                   <ThemedView style={styles.cardHeader}>
@@ -1558,8 +1569,8 @@ export default function ReportsScreen() {
                     </ThemedText>
                   ) : (
                     <ThemedText type="small" themeColor="textSecondary">
-                      Se genera al despertar tras una noche monitorizada —
-                      también llega como notificación.
+                      Se genera al despertar tras una noche monitorizada con
+                      la banda — también llega como notificación.
                     </ThemedText>
                   )}
                 </ThemedView>
@@ -1780,6 +1791,11 @@ const styles = StyleSheet.create({
   cardWithEvents: {
     borderLeftWidth: 4,
     borderLeftColor: '#D32F2F',
+  },
+  sectionTitle: {
+    paddingTop: Spacing.two,
+    paddingBottom: Spacing.one,
+    fontSize: 15,
   },
   filterChip: {
     alignSelf: 'flex-start',

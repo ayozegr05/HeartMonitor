@@ -16,7 +16,19 @@ import {
 } from '@/features/garmin/garminClient';
 import { useTheme } from '@/hooks/use-theme';
 
+import type { GarminDayPoint } from '@/features/healthconnect/garminSummary';
+
 const DAYS = 30;
+
+const FIELD_LABELS: { key: keyof GarminDayPoint; label: string }[] = [
+  { key: 'sleep', label: 'sueño' },
+  { key: 'hrvRmssdMs', label: 'VFC' },
+  { key: 'spo2AvgPct', label: 'SpO₂' },
+  { key: 'respirationPerMin', label: 'resp' },
+  { key: 'restingBpm', label: 'reposo' },
+  { key: 'steps', label: 'pasos' },
+  { key: 'hrMaxBpm', label: 'FC' },
+];
 
 /**
  * Provisional diagnostics screen: for each of the last 14 days shows which
@@ -163,8 +175,7 @@ export default function DiagnosticsScreen() {
 
               {diag && (
                 <ThemedText type="smallBold" style={styles.listTitle}>
-                  Por día — columnas: SpO₂ · resp · resumen diario · sueño
-                  detallado
+                  Campos obtenidos por día (⚠ debajo = endpoint que falló)
                 </ThemedText>
               )}
             </>
@@ -175,23 +186,27 @@ export default function DiagnosticsScreen() {
                 {item.day.slice(5)}
               </ThemedText>
               <View style={styles.fieldRow}>
-                {(
-                  [
-                    ['SpO₂', item.spo2],
-                    ['resp', item.respiration],
-                    ['resumen', item.dailySummary],
-                    ['sueño', item.sleepDetail],
-                  ] as const
-                ).map(([label, ok]) => (
-                  <ThemedText
-                    key={label}
-                    type="small"
-                    style={{
-                      color: ok ? '#2E7D32' : theme.backgroundSelected,
-                    }}>
-                    {mark(ok)} {label}
+                {item.point ? (
+                  FIELD_LABELS.map(({ key, label }) => {
+                    const present = item.point![key] !== undefined;
+                    return (
+                      <ThemedText
+                        key={key}
+                        type="small"
+                        style={{
+                          color: present
+                            ? '#2E7D32'
+                            : theme.backgroundSelected,
+                        }}>
+                        {mark(present)} {label}
+                      </ThemedText>
+                    );
+                  })
+                ) : (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    sin datos
                   </ThemedText>
-                ))}
+                )}
               </View>
               {item.errors.length > 0 && (
                 <ThemedText type="small" style={{ color: '#FFB020' }}>
@@ -230,6 +245,9 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
     padding: Spacing.two,
     marginBottom: Spacing.one,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 2,
   },
   dayLabel: { width: 40 },
@@ -237,7 +255,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
-    marginLeft: 48,
-    marginTop: -22,
+    flex: 1,
   },
 });
