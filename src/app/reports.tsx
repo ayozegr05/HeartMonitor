@@ -714,6 +714,7 @@ function WatchVsBandTrend({
         </ThemedText>
       </ThemedView>
       <View style={styles.trendRow}>
+        <ChartAxis top={`${max} ms`} bottom="0" />
         {days.map((d) => {
           const ours = oursByDay.get(d);
           const theirs = watchByDay.get(d);
@@ -772,6 +773,30 @@ function sleepDurationMs(point: GarminDayPoint): number | null {
   if (!point.sleep) return null;
   const duration = point.sleep.endedAt - point.sleep.startedAt;
   return duration > 0 ? duration : null;
+}
+
+/** Narrow Y-axis column for the mini bar charts: top and bottom scale labels. */
+function ChartAxis({ top, bottom }: { top: string; bottom: string }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.trendPair, { flex: 0, width: 30 }]}>
+      <View style={[styles.trendPairBars, styles.axisCol]}>
+        <ThemedText
+          type="small"
+          style={[styles.axisLabel, { color: theme.textSecondary }]}>
+          {top}
+        </ThemedText>
+        <ThemedText
+          type="small"
+          style={[styles.axisLabel, { color: theme.textSecondary }]}>
+          {bottom}
+        </ThemedText>
+      </View>
+      <ThemedText type="small" style={styles.trendPairLabel}>
+        {' '}
+      </ThemedText>
+    </View>
+  );
 }
 
 /** Average of the older half vs the newer half of a chronological series. */
@@ -837,6 +862,7 @@ function WatchSleepTrendInline({ series }: { series: GarminSeries | null }) {
         Horas dormidas por noche
       </ThemedText>
       <View style={styles.trendRow}>
+        <ChartAxis top={`${Math.round(max / 3600000)} h`} bottom="0" />
         {points.map(({ point, duration }) => (
           <View key={point.day} style={styles.trendPair}>
             <View style={styles.trendPairBars}>
@@ -897,6 +923,7 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
         </ThemedText>
       </ThemedView>
       <View style={styles.trendRow}>
+        <ChartAxis top="100%" bottom="0" />
         {points.map((point) => (
           <View key={point.day} style={styles.trendPair}>
             <View style={styles.trendPairBars}>
@@ -1150,6 +1177,7 @@ function RmssdTrend() {
       ) : (
         <>
           <View style={styles.trendRow}>
+            <ChartAxis top={`${max} ms`} bottom="0" />
             {bars.map((b) => (
               <View
                 key={b.key}
@@ -1875,6 +1903,12 @@ const styles = StyleSheet.create({
   trendPairLabel: {
     fontSize: 9,
   },
+  axisCol: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  axisLabel: { fontSize: 9, lineHeight: 11 },
   trendChips: {
     flexDirection: 'row',
     gap: 6,
