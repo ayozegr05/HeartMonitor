@@ -511,9 +511,12 @@ function GarminCard({
   onConnect,
 }: {
   series: GarminSeries | null;
-  onConnect: () => void;
+  onConnect: () => Promise<void>;
 }) {
   const theme = useTheme();
+  const [connectState, setConnectState] = useState<
+    'idle' | 'loading' | 'done'
+  >('idle');
   // The newest calendar point is often "today" with steps/FC but no
   // overnight summary yet. Show the newest point that actually has night data.
   const latest = [...(series?.points ?? [])]
@@ -600,9 +603,34 @@ function GarminCard({
             vincula tu cuenta Garmin en Ajustes → Cuenta Garmin.
           </ThemedText>
           <Pressable
-            onPress={onConnect}
-            style={[styles.exportButton, { backgroundColor: theme.backgroundSelected }]}>
-            <ThemedText type="smallBold">Leer datos del reloj</ThemedText>
+            onPress={() => {
+              if (connectState === 'loading') return;
+              setConnectState('loading');
+              onConnect()
+                .catch(() => {})
+                .finally(() => {
+                  setConnectState('done');
+                  setTimeout(() => setConnectState('idle'), 3000);
+                });
+            }}
+            disabled={connectState === 'loading'}
+            style={[
+              styles.exportButton,
+              {
+                backgroundColor:
+                  connectState === 'done'
+                    ? '#2E7D32'
+                    : theme.backgroundSelected,
+                opacity: connectState === 'loading' ? 0.6 : 1,
+              },
+            ]}>
+            <ThemedText type="smallBold">
+              {connectState === 'loading'
+                ? 'Leyendo datos del reloj…'
+                : connectState === 'done'
+                  ? '✓ Datos leídos'
+                  : 'Leer datos del reloj'}
+            </ThemedText>
           </Pressable>
         </>
       )}
@@ -1556,12 +1584,11 @@ export default function ReportsScreen() {
     }, [thresholds]),
   );
 
-  const connectGarmin = () => {
+  const connectGarmin = (): Promise<void> =>
     requestGarminReadAccess()
       .then((granted) => (granted ? readGarminSeries(30) : null))
       .then(setGarmin)
       .catch(() => setGarmin(null));
-  };
 
   const openStrip = (s: CapturedStrip) =>
     router.push({
