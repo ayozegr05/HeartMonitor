@@ -1730,6 +1730,14 @@ function FcLineTrend({
                   color="#93C5FD"
                 />
               </View>
+              {data.some((d) => d.mid !== null) && (
+                <View style={StyleSheet.absoluteFill}>
+                  <NightLine
+                    fracs={data.map((d) => frac(d.mid ?? lo))}
+                    color="#F5F5F5"
+                  />
+                </View>
+              )}
             </View>
             <View style={styles.dateRow}>
               {data.map((d) => (
