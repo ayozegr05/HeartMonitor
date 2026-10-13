@@ -6,47 +6,27 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import {
-    fetchGarminApiDays,
+    fetchGarminApiDiagnostics,
+    type GarminApiDiagnostics,
 } from '@/features/garmin/garminApi';
 import {
     GarminAuthError,
     garminConnectedEmail,
     garminLogout,
 } from '@/features/garmin/garminClient';
-import type { GarminDayPoint } from '@/features/healthconnect/garminSummary';
 import { useTheme } from '@/hooks/use-theme';
 
 const DAYS = 30;
 
-const localDay = (ms: number): string => {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-
-const FIELD_LABELS: { key: keyof GarminDayPoint; label: string }[] = [
-  { key: 'sleep', label: 'sueño' },
-  { key: 'hrvRmssdMs', label: 'VFC' },
-  { key: 'spo2AvgPct', label: 'SpO₂' },
-  { key: 'respirationPerMin', label: 'resp' },
-  { key: 'restingBpm', label: 'reposo' },
-  { key: 'steps', label: 'pasos' },
-  { key: 'hrMaxBpm', label: 'FC' },
-];
-
-type DayRow = {
-  day: string;
-  point?: Partial<GarminDayPoint>;
-};
-
 /**
- * Provisional diagnostics screen: for each of the last N days shows which
- * fields the Garmin account API actually returned, so gaps can be told
- * apart — "Garmin didn't send it" vs "our parser missed it".
+ * Provisional diagnostics screen: for each of the last 14 days shows which
+ * endpoint of the Garmin account API actually produced data (and which
+ * threw), so API gaps can be told apart from parser gaps.
  */
 export default function DiagnosticsScreen() {
   const theme = useTheme();
   const [email, setEmail] = useState<string | null>(null);
-  const [rows, setRows] = useState<DayRow[] | null>(null);
+  const [diag, setDiag] = useState<GarminApiDiagnostics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [queriedAt, setQueriedAt] = useState<number | null>(null);
@@ -65,16 +45,10 @@ export default function DiagnosticsScreen() {
     setLoading(true);
     setError(null);
     try {
-      const apiDays = await fetchGarminApiDays(DAYS);
-      const out: DayRow[] = [];
-      for (let i = 0; i < DAYS; i++) {
-        const day = localDay(Date.now() - i * 86_400_000);
-        out.push({ day, point: apiDays?.get(day) });
-      }
-      setRows(out);
+      setDiag(await fetchGarminApiDiagnostics(DAYS));
       setQueriedAt(Date.now());
     } catch (e) {
-      setRows(null);
+      setDiag(null);
       setError(
         e instanceof GarminAuthError
           ? `${e.message} (código: ${e.code})`
@@ -91,10 +65,12 @@ export default function DiagnosticsScreen() {
     garminLogout()
       .then(() => {
         setEmail(null);
-        setRows(null);
+        setDiag(null);
       })
       .catch(() => {});
   };
+
+  const mark = (ok: boolean) => (ok ? '✓' : '·');
 
   return (
     <ThemedView style={styles.container}>
@@ -103,72 +79,95 @@ export default function DiagnosticsScreen() {
           Diagnóstico
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary" style={styles.note}>
-          Provisional — muestra qué campos devuelve la API de Garmin por día
-          para distinguir huecos de la API de huecos del parser.
+          Provisional — qué devuelve cada endpoint de Garmin por día: ✓ datos,
+          · vacío (día sin registro), ⚠ error de llamada.
         </ThemedText>
 
-        <ThemedView type="backgroundElement" style={styles.card}>
-          <ThemedText type="smallBold" style={styles.cardTitle}>
-            Cuenta Garmin
-          </ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {email ? `vinculada: ${email}` : 'sin vincular — Ajustes → Cuenta Garmin'}
-          </ThemedText>
-          <View style={styles.buttonRow}>
-            <Pressable
-              onPress={query}
-              disabled={loading || !email}
-              style={[
-                styles.button,
-                {
-                  backgroundColor: theme.backgroundSelected,
-                  opacity: loading || !email ? 0.5 : 1,
-                },
-              ]}>
-              <ThemedText type="smallBold">
-                {loading ? 'Consultando…' : 'Consultar API ahora'}
-              </ThemedText>
-            </Pressable>
-            {email && (
-              <Pressable
-                onPress={unlink}
-                style={[
-                  styles.button,
-                  { backgroundColor: theme.backgroundElement },
-                ]}>
-                <ThemedText type="small">Desvincular</ThemedText>
-              </Pressable>
-            )}
-          </View>
-          {error && (
-            <ThemedText type="small" style={{ color: '#E5484D' }}>
-              {error}
-            </ThemedText>
-          )}
-          {queriedAt && (
-            <ThemedText type="small" themeColor="textSecondary">
-              Última consulta:{' '}
-              {new Date(queriedAt).toLocaleTimeString(undefined, {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-              })}
-            </ThemedText>
-          )}
-        </ThemedView>
-
         <FlatList
-          data={rows ?? []}
+          data={diag?.days ?? []}
           keyExtractor={(r) => r.day}
           contentContainerStyle={{ paddingBottom: BottomTabInset }}
           ListHeaderComponent={
-            rows ? (
-              <ThemedText
-                type="smallBold"
-                style={{ paddingVertical: Spacing.two }}>
-                Campos devueltos por la API, por día
-              </ThemedText>
-            ) : null
+            <>
+              <ThemedView type="backgroundElement" style={styles.card}>
+                <ThemedText type="smallBold" style={styles.cardTitle}>
+                  Cuenta Garmin
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {email
+                    ? `vinculada: ${email}`
+                    : 'sin vincular — Ajustes → Cuenta Garmin'}
+                </ThemedText>
+                <View style={styles.buttonRow}>
+                  <Pressable
+                    onPress={query}
+                    disabled={loading || !email}
+                    style={[
+                      styles.button,
+                      {
+                        backgroundColor: theme.backgroundSelected,
+                        opacity: loading || !email ? 0.5 : 1,
+                      },
+                    ]}>
+                    <ThemedText type="smallBold">
+                      {loading ? 'Consultando…' : 'Consultar API ahora'}
+                    </ThemedText>
+                  </Pressable>
+                  {email && (
+                    <Pressable
+                      onPress={unlink}
+                      style={[
+                        styles.button,
+                        { backgroundColor: theme.backgroundElement },
+                      ]}>
+                      <ThemedText type="small">Desvincular</ThemedText>
+                    </Pressable>
+                  )}
+                </View>
+                {error && (
+                  <ThemedText type="small" style={{ color: '#E5484D' }}>
+                    {error}
+                  </ThemedText>
+                )}
+                {queriedAt && (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Última consulta:{' '}
+                    {new Date(queriedAt).toLocaleTimeString(undefined, {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })}
+                  </ThemedText>
+                )}
+              </ThemedView>
+
+              {diag && (
+                <ThemedView type="backgroundElement" style={styles.card}>
+                  <ThemedText type="smallBold" style={styles.cardTitle}>
+                    Endpoints de rango
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    VFC (30 días):{' '}
+                    {diag.hrvError
+                      ? `⚠ ${diag.hrvError}`
+                      : `${diag.hrvDays} días con datos`}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Estadísticas diarias (rango):{' '}
+                    {diag.dailyStatsError
+                      ? `⚠ ${diag.dailyStatsError}`
+                      : `${diag.dailyStatsDays} días con datos`}
+                  </ThemedText>
+                </ThemedView>
+              )}
+
+              {diag && (
+                <ThemedText type="smallBold" style={styles.listTitle}>
+                  Por día — columnas: SpO₂ · resp · resumen diario · sueño
+                  detallado
+                </ThemedText>
+              )}
+            </>
           }
           renderItem={({ item }) => (
             <ThemedView type="backgroundElement" style={styles.dayRow}>
@@ -176,26 +175,29 @@ export default function DiagnosticsScreen() {
                 {item.day.slice(5)}
               </ThemedText>
               <View style={styles.fieldRow}>
-                {item.point ? (
-                  FIELD_LABELS.map(({ key, label }) => {
-                    const present = item.point![key] !== undefined;
-                    return (
-                      <ThemedText
-                        key={key}
-                        type="small"
-                        style={{
-                          color: present ? '#2E7D32' : theme.backgroundSelected,
-                        }}>
-                        {present ? '✓' : '·'} {label}
-                      </ThemedText>
-                    );
-                  })
-                ) : (
-                  <ThemedText type="small" themeColor="textSecondary">
-                    sin datos
+                {(
+                  [
+                    ['SpO₂', item.spo2],
+                    ['resp', item.respiration],
+                    ['resumen', item.dailySummary],
+                    ['sueño', item.sleepDetail],
+                  ] as const
+                ).map(([label, ok]) => (
+                  <ThemedText
+                    key={label}
+                    type="small"
+                    style={{
+                      color: ok ? '#2E7D32' : theme.backgroundSelected,
+                    }}>
+                    {mark(ok)} {label}
                   </ThemedText>
-                )}
+                ))}
               </View>
+              {item.errors.length > 0 && (
+                <ThemedText type="small" style={{ color: '#FFB020' }}>
+                  ⚠ {item.errors.join(' · ')}
+                </ThemedText>
+              )}
             </ThemedView>
           )}
         />
@@ -223,14 +225,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     alignItems: 'center',
   },
+  listTitle: { paddingVertical: Spacing.two },
   dayRow: {
     borderRadius: Spacing.two,
     padding: Spacing.two,
     marginBottom: Spacing.one,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
+    gap: 2,
   },
   dayLabel: { width: 40 },
-  fieldRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, flex: 1 },
+  fieldRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+    marginLeft: 48,
+    marginTop: -22,
+  },
 });

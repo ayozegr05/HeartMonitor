@@ -151,6 +151,31 @@ async function fetchSpo2(day: string): Promise<Partial<GarminDayPoint> | null> {
   return Object.keys(out).length ? out : null;
 }
 
+/**
+ * /usersummary-service/usersummary/daily/{user}?calendarDate — the daily
+ * summary card: resting HR, steps, HR min/max and stress. The
+ * userstats-service range endpoint returns nothing on this account.
+ */
+async function fetchDailySummary(
+  displayName: string,
+  day: string,
+): Promise<Partial<GarminDayPoint> | null> {
+  const data = await garminGet(
+    `/usersummary-service/usersummary/daily/${encodeURIComponent(displayName)}?calendarDate=${day}`,
+  );
+  if (!data) return null;
+  const out: Partial<GarminDayPoint> = {};
+  const rhr = deepPickNum(data, ['restingHeartRate', 'restingBpm']);
+  if (rhr !== undefined) out.restingBpm = Math.round(rhr);
+  const steps = deepPickNum(data, ['totalSteps', 'steps']);
+  if (steps !== undefined) out.steps = Math.round(steps);
+  const hrMax = deepPickNum(data, ['maxHeartRate']);
+  if (hrMax !== undefined) out.hrMaxBpm = Math.round(hrMax);
+  const hrMin = deepPickNum(data, ['minHeartRate']);
+  if (hrMin !== undefined) out.hrMinBpm = Math.round(hrMin);
+  return Object.keys(out).length ? out : null;
+}
+
 /** /wellness-service/wellness/daily/respiration/{date} — one day. */
 async function fetchRespiration(
   day: string,
@@ -275,6 +300,7 @@ export async function fetchGarminApiDays(
     try {
       merge(d, (await fetchSpo2(d)) ?? {});
       merge(d, (await fetchRespiration(d)) ?? {});
+      merge(d, (await fetchDailySummary(t.displayName, d)) ?? {});
     } catch (e) {
       if (e instanceof GarminAuthError) throw e;
     }
@@ -289,4 +315,119 @@ export async function fetchGarminApiDays(
     }
   }
   return merged;
+}
+
+export interface GarminApiDiagnostics {
+  /** Days the HRV range endpoint returned. */
+  hrvDays: number;
+  hrvError?: string;
+  /** Days the userstats range endpoint returned (resting HR / steps). */
+  dailyStatsDays: number;
+  dailyStatsError?: string;
+  /** Per-day results, newest first. */
+  days: {
+    day: string;
+    spo2: boolean;
+    respiration: boolean;
+    sleepDetail: boolean;
+    dailySummary: boolean;
+    errors: string[];
+    point?: Partial<GarminDayPoint>;
+  }[];
+}
+
+const errText = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e);
+
+/**
+ * Diagnostics variant of fetchGarminApiDays: reports which endpoint
+ * produced data per day and which threw, so API gaps can be told apart
+ * from parser gaps. Only used by the Diagnostics screen.
+ */
+export async function fetchGarminApiDiagnostics(
+  days: number,
+): Promise<GarminApiDiagnostics | null> {
+  const t = await loadGarminTokens();
+  if (!t) return null;
+
+  const out: GarminApiDiagnostics = {
+    hrvDays: 0,
+    dailyStatsDays: 0,
+    days: [],
+  };
+  const end = localDay(daysAgo(0));
+  const start = localDay(daysAgo(days - 1));
+
+  const byDay = new Map<string, Partial<GarminDayPoint>>();
+  const merge = (day: string, p: Partial<GarminDayPoint>) => {
+    byDay.set(day, { ...byDay.get(day), ...p });
+  };
+
+  try {
+    const hrv = await fetchHrvRange(start, end);
+    out.hrvDays = hrv.length;
+    for (const s of hrv) merge(s.day, { hrvRmssdMs: s.avg });
+  } catch (e) {
+    out.hrvError = errText(e);
+    if (e instanceof GarminAuthError) throw e;
+  }
+  try {
+    const stats = await fetchDailyStats(t.displayName, start, end);
+    out.dailyStatsDays = stats.size;
+    for (const [d, p] of stats) merge(d, p);
+  } catch (e) {
+    out.dailyStatsError = errText(e);
+    if (e instanceof GarminAuthError) throw e;
+  }
+
+  const perDay = Math.min(days, 14);
+  for (let i = 0; i < perDay; i++) {
+    const d = localDay(daysAgo(i));
+    const row: GarminApiDiagnostics['days'][number] = {
+      day: d,
+      spo2: false,
+      respiration: false,
+      sleepDetail: false,
+      dailySummary: false,
+      errors: [],
+    };
+    try {
+      const p = await fetchSpo2(d);
+      row.spo2 = p !== null;
+      if (p) merge(d, p);
+    } catch (e) {
+      row.errors.push(`spo2: ${errText(e)}`);
+      if (e instanceof GarminAuthError) throw e;
+    }
+    try {
+      const p = await fetchRespiration(d);
+      row.respiration = p !== null;
+      if (p) merge(d, p);
+    } catch (e) {
+      row.errors.push(`resp: ${errText(e)}`);
+      if (e instanceof GarminAuthError) throw e;
+    }
+    try {
+      const p = await fetchDailySummary(t.displayName, d);
+      row.dailySummary = p !== null;
+      if (p) merge(d, p);
+    } catch (e) {
+      row.errors.push(`summary: ${errText(e)}`);
+      if (e instanceof GarminAuthError) throw e;
+    }
+    try {
+      const p = await fetchSleepDetail(t.displayName, d);
+      row.sleepDetail = p !== null;
+      if (p) merge(d, p);
+    } catch (e) {
+      row.errors.push(`sleep: ${errText(e)}`);
+      if (e instanceof GarminAuthError) throw e;
+    }
+    out.days.push(row);
+  }
+
+  for (const row of out.days) {
+    row.point = byDay.get(row.day);
+  }
+  return out;
 }
