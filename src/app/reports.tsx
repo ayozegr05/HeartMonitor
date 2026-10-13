@@ -1670,6 +1670,129 @@ function WatchMorningCard({
   );
 }
 
+/** One "candle" per night: vertical bar from FC min to max + mean marker. */
+function FcCandleTrend({
+  title,
+  entries,
+  midNote,
+}: {
+  title: string;
+  entries: { key: string; day: string; min: number; max: number; mid: number | null }[];
+  midNote: string;
+}) {
+  const { range, custom, chips, modal } = useNightRange();
+  const data = rangeFilter(entries, range, custom);
+  if (entries.length === 0) return null;
+  const lo = data.length ? Math.floor(Math.min(...data.map((d) => d.min))) : 40;
+  const hi = data.length ? Math.ceil(Math.max(...data.map((d) => d.max))) : 100;
+  const span = Math.max(hi - lo, 10);
+  const mid = Math.round((hi + lo) / 2);
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          {title}
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {rangeCaption(data)}
+        </ThemedText>
+      </ThemedView>
+      <View style={styles.rangeRow}>{chips}</View>
+      {modal}
+      {data.length === 0 ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          Sin noches en este rango.
+        </ThemedText>
+      ) : (
+        <View style={styles.trendRow}>
+          <ChartAxis
+            labels={[`${hi}`, `${mid}`, `${lo} bpm`]}
+          />
+          {data.map((d) => (
+            <View key={d.key} style={styles.trendPair}>
+              <View style={styles.candleCol}>
+                <View
+                  style={[
+                    styles.candleBar,
+                    {
+                      bottom: `${((d.min - lo) / span) * 100}%`,
+                      height: `${Math.max(4, ((d.max - d.min) / span) * 100)}%`,
+                    },
+                  ]}
+                />
+                {d.mid !== null && (
+                  <View
+                    style={[
+                      styles.candleDot,
+                      {
+                        bottom: `${((d.mid - lo) / span) * 100}%`,
+                      },
+                    ]}
+                  />
+                )}
+              </View>
+              <View style={styles.dateTick}>
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  style={styles.dateTickText}>
+                  {wdLabel(d.day)}
+                </ThemedText>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+      <ThemedText type="small" themeColor="textSecondary">
+        Barra = rango de FC (mín–máx) · punto = {midNote}
+      </ThemedText>
+    </ThemedView>
+  );
+}
+
+function WatchFcTrend({ watch }: { watch: GarminSeries | null }) {
+  const entries = (watch?.points ?? [])
+    .filter((p) => p.hrMinBpm !== undefined || p.hrMaxBpm !== undefined)
+    .map((p) => ({
+      key: p.day,
+      day: p.day,
+      min: p.hrMinBpm ?? p.hrMaxBpm!,
+      max: p.hrMaxBpm ?? p.hrMinBpm!,
+      mid: p.restingBpm ?? null,
+    }));
+  return (
+    <FcCandleTrend
+      title="FC del día por jornada · reloj"
+      entries={entries}
+      midNote="FC en reposo"
+    />
+  );
+}
+
+function BandFcTrend({ items }: { items: SessionWithReport[] }) {
+  const entries = [...items]
+    .filter((i) => i.report.minBpm !== null && i.report.maxBpm !== null)
+    .map((i) => {
+      const d = new Date(i.session.endedAt ?? i.session.startedAt);
+      const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return {
+        key: `b${i.session.id}`,
+        day,
+        min: i.report.minBpm!,
+        max: i.report.maxBpm!,
+        mid: i.report.avgBpm,
+      };
+    })
+    .sort((a, b) => a.day.localeCompare(b.day));
+  return (
+    <FcCandleTrend
+      title="FC por sesión · banda"
+      entries={entries}
+      midNote="FC media de la sesión"
+    />
+  );
+}
+
 /** Watch-day row for the FC tab: daily HR range, resting HR and steps. */
 function WatchDayCard({ point }: { point: GarminDayPoint }) {
   const bits: string[] = [];
@@ -2318,6 +2441,7 @@ export default function ReportsScreen() {
                 data={watchRows}
                 keyExtractor={(r) => r.key}
                 contentContainerStyle={{ paddingBottom: BottomTabInset }}
+                ListHeaderComponent={<WatchFcTrend watch={garmin} />}
                 ListEmptyComponent={
                   <ThemedText type="small" themeColor="textSecondary">
                     Sin días del reloj todavía — vincula tu cuenta Garmin en
@@ -2348,6 +2472,7 @@ export default function ReportsScreen() {
               data={fcRows}
               keyExtractor={(r) => r.key}
               contentContainerStyle={{ paddingBottom: BottomTabInset }}
+              ListHeaderComponent={<BandFcTrend items={items} />}
               ListEmptyComponent={
                 <ThemedText type="small" themeColor="textSecondary">
                   {onlyWithEvents && items.length > 0
@@ -2636,6 +2761,24 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   lineSeg: { position: 'absolute', height: 2, borderRadius: 1 },
+  candleCol: { flex: 1, width: '100%', position: 'relative' },
+  candleBar: {
+    position: 'absolute',
+    alignSelf: 'center',
+    width: 6,
+    borderRadius: 3,
+    backgroundColor: '#E5484D',
+  },
+  candleDot: {
+    position: 'absolute',
+    alignSelf: 'center',
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#F5F5F5',
+    borderWidth: 0.5,
+    borderColor: '#111',
+  },
   rangeRow: {
     flexDirection: 'row',
     alignItems: 'center',
