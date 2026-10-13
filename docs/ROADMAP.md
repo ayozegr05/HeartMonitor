@@ -69,9 +69,10 @@ The app is **observational, not diagnostic** — no medical claims anywhere.
 - Settings: sectioned cards (thresholds / Health Connect / backup /
   night reliability).
 
-## M4 — Polar H10 🔜 (next)
+## M4 — Polar H10 ✅ (core shipped)
 
-**Status:** hardware arriving; parser can be written before it arrives.
+**Status:** PMD parser + live ECG + strips + morphology alerts + RMSSD
+landed on `devin/local-test-m4-m5`. Overnight Holter stays open.
 
 ### Why it matters
 
@@ -135,6 +136,32 @@ educational for the portfolio.
   SpO2, respiration — plus resting HR, steps and sleep stages.
 - Merged into `readGarminSeries`; Settings card links the account,
   reports show `vía cuenta Garmin Connect`. See `docs/garmin-connect.md`.
+
+## M5c — Informes UX + Garmin watch overlay ✅
+
+- Source separation everywhere: ⌚ Reloj / 💚 Banda chips on every
+  report tab; cards and charts show one source at a time.
+- Communicative charts: 7D/14D/30D/90D/elegir-fechas chips + own
+  calendar modal, stacked `L\n14` day labels, "del X al Y" captions,
+  per-variable phrases in the morning report (VFC vs habitual,
+  respiración in words, SpO₂ dips, resting, day min–max).
+- Charts: sleep as line+dots (discrete nights), SpO₂ as
+  threshold-colored bars (mín/media chips), FC as triple line
+  (max/min/mean) with a unified colored legend.
+- Watch cards match band cards: MÍN/MEDIA/MÁX/REPOSO stat blocks,
+  sustained low-HR flag from HC samples (<35 bpm ≥ 5 min runs).
+- True watch daily average (`hrAvgBpm`) computed from raw HC samples.
+- Deletion semantics: band = per session; watch = per night via
+  `@garmin_ignored_days` + persisted-overlay drop (re-reads can't
+  resurrect a deleted night).
+
+## M7 — Garmin Connect IQ watch app (future module)
+
+Full plan in `docs/connect-iq-module.md`. In short: a Monkey C watch
+app living in `garmin-watch/` inside this repo that records
+beat-to-beat RR on the watch (the only path to real pauses without
+the band) and syncs it into HeartMonitor. Same project, new toolchain.
+Decision point: only worth it once band coverage proves insufficient.
 
 ## M6 — Portfolio polish
 
