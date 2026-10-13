@@ -127,6 +127,15 @@ educational for the portfolio.
 - Alert fan-out: cardiac event + connection-lost to a caregiver chat.
 - Optional morning summary message.
 
+## M5b — Garmin Connect direct client ✅ (on `devin/local-test-m4-m5`)
+
+- Private Connect API client (`src/features/garmin/`): pure-TS
+  OAuth1 signer → SSO ticket → OAuth2 Bearer; password never stored.
+- Fills what Garmin withholds from Health Connect: overnight VFC,
+  SpO2, respiration — plus resting HR, steps and sleep stages.
+- Merged into `readGarminSeries`; Settings card links the account,
+  reports show `vía cuenta Garmin Connect`. See `docs/garmin-connect.md`.
+
 ## M6 — Portfolio polish
 
 - Onboarding flow (first-run: pair sensor → set thresholds → battery

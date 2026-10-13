@@ -27,6 +27,13 @@ import {
     type BackupEntry
 } from '@/features/backup/deviceBackup';
 import { sendTelegramMessage } from '@/features/caregiver/telegram';
+import { fetchGarminApiDays } from '@/features/garmin/garminApi';
+import {
+    GarminAuthError,
+    garminConnectedEmail,
+    garminLogin,
+    garminLogout,
+} from '@/features/garmin/garminClient';
 import { restoreFromHealthConnect } from '@/features/healthconnect/healthConnectRestore';
 import {
     healthConnectStatus,
@@ -511,6 +518,158 @@ function CaregiverCard() {
   );
 }
 
+/**
+ * Garmin Connect account card. The password is typed once to mint
+ * OAuth tokens — only the tokens persist (garminClient); the password
+ * field itself is never stored. Linked data fills the vitals Garmin
+ * doesn't write into Health Connect (VFC, SpO2, respiration).
+ */
+function GarminAccountCard() {
+  const theme = useTheme();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [linked, setLinked] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'login' | 'test' | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      garminConnectedEmail().then(setLinked).catch(() => setLinked(null));
+    }, []),
+  );
+
+  const connect = async () => {
+    if (!email.trim() || !password) {
+      setMsg('Escribe tu email y contraseña de Garmin Connect.');
+      return;
+    }
+    setBusy('login');
+    setMsg(null);
+    try {
+      const name = await garminLogin(email, password);
+      setPassword('');
+      setLinked(email.trim());
+      setMsg(`Conectado como ${name} ✓`);
+    } catch (e) {
+      setMsg(e instanceof GarminAuthError ? e.message : 'Error de red — reintenta.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const disconnect = async () => {
+    await garminLogout();
+    setLinked(null);
+    setMsg('Cuenta desvinculada.');
+  };
+
+  const testRead = async () => {
+    setBusy('test');
+    setMsg(null);
+    try {
+      const days = await fetchGarminApiDays(7);
+      const withData = days ? [...days.values()].filter((d) => Object.keys(d).length > 0).length : 0;
+      setMsg(
+        withData > 0
+          ? `Lectura OK — ${withData} días con datos en la última semana.`
+          : 'Conectado, pero Garmin no devolvió datos esta semana.',
+      );
+    } catch (e) {
+      setMsg(e instanceof GarminAuthError ? e.message : 'La lectura falló — reintenta.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedText type="smallBold">⌚ Cuenta Garmin</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        {linked
+          ? `Vinculada: ${linked}`
+          : 'Sin vincular — la VFC, SpO2 y respiración del reloj no llegan por Health Connect'}
+      </ThemedText>
+
+      {!linked && (
+        <>
+          <ThemedView style={styles.inputRow}>
+            <ThemedView style={styles.inputLabel}>
+              <ThemedText type="smallBold">Email Garmin Connect</ThemedText>
+            </ThemedView>
+            <TextInput
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              style={[
+                styles.inputWide,
+                { color: theme.text, borderColor: theme.backgroundSelected },
+              ]}
+            />
+          </ThemedView>
+          <ThemedView style={styles.inputRow}>
+            <ThemedView style={styles.inputLabel}>
+              <ThemedText type="smallBold">Contraseña</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Solo se usa una vez para obtener los tokens — no se guarda
+              </ThemedText>
+            </ThemedView>
+            <TextInput
+              value={password}
+              onChangeText={setPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+              style={[
+                styles.inputWide,
+                { color: theme.text, borderColor: theme.backgroundSelected },
+              ]}
+            />
+          </ThemedView>
+          <Pressable
+            onPress={() => void connect()}
+            disabled={busy !== null}
+            style={[styles.button, { backgroundColor: '#2E7D32' }]}>
+            <ThemedText type="smallBold" style={styles.buttonText}>
+              {busy === 'login' ? 'Conectando…' : 'Vincular cuenta'}
+            </ThemedText>
+          </Pressable>
+        </>
+      )}
+
+      {linked && (
+        <>
+          <Pressable
+            onPress={() => void testRead()}
+            disabled={busy !== null}
+            style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+            <ThemedText type="smallBold">
+              {busy === 'test' ? 'Comprobando…' : 'Probar lectura de datos'}
+            </ThemedText>
+          </Pressable>
+          <Pressable
+            onPress={() => void disconnect()}
+            style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+            <ThemedText type="smallBold">Desvincular</ThemedText>
+          </Pressable>
+        </>
+      )}
+
+      {msg !== null && (
+        <ThemedText type="small" themeColor="textSecondary">
+          {msg}
+        </ThemedText>
+      )}
+      <ThemedText type="small" themeColor="textSecondary">
+        Lee la VFC nocturna, SpO2, respiración y FC en reposo desde tu cuenta
+        de Garmin Connect (API interna — puede romperse si Garmin la cambia).
+        Los datos van solo a esta app.
+      </ThemedText>
+    </ThemedView>
+  );
+}
+
 export default function SettingsScreen() {
   const theme = useTheme();
   const { thresholds, setThresholds } = useMonitorStore();
@@ -602,6 +761,8 @@ export default function SettingsScreen() {
           </ThemedView>
 
           {Platform.OS === 'android' && <ConnectivityCard />}
+
+          {Platform.OS === 'android' && <GarminAccountCard />}
 
           <CaregiverCard />
 

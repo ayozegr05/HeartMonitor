@@ -24,17 +24,17 @@ import {
     type WeeklyReport,
 } from '@/domain/weeklyReport';
 import {
-  listEcgSessions,
-  removeEcgSession,
-  shareEcgSessionCsv,
-  type EcgSessionInfo,
+    listEcgSessions,
+    removeEcgSession,
+    shareEcgSessionCsv,
+    type EcgSessionInfo,
 } from '@/features/ecg/ecgSessionRecorder';
 import { loadStrips, removeStrip, type CapturedStrip } from '@/features/ecg/stripStore';
 import {
-  readGarminSeries,
-  requestGarminReadAccess,
-  type GarminDayPoint,
-  type GarminSeries,
+    readGarminSeries,
+    requestGarminReadAccess,
+    type GarminDayPoint,
+    type GarminSeries,
 } from '@/features/healthconnect/garminSummary';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { shareWeeklyPdf } from '@/features/reports/exportWeeklyPdf';
@@ -522,8 +522,9 @@ function GarminCard({
           ⌚ Tu reloj dice
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          vía Health Connect
-          {series?.source ? ` · ${series.source}` : ''}
+          {series?.source === 'cuenta Garmin'
+            ? 'vía cuenta Garmin Connect'
+            : `vía Health Connect${series?.source ? ` · ${series.source}` : ''}`}
         </ThemedText>
       </ThemedView>
       {hasData && latest ? (
@@ -583,8 +584,9 @@ function GarminCard({
         <>
           <ThemedText type="small" themeColor="textSecondary">
             El resumen del reloj (sueño, fases, VFC, SpO2) llega si activas en
-            Garmin Connect → Ajustes → Health Connect la escritura de datos.
-            Luego esta app solo los lee.
+            Garmin Connect → Ajustes → Health Connect la escritura de datos —
+            aunque Garmin nunca publica VFC ni SpO2 ahí. Para esos datos,
+            vincula tu cuenta Garmin en Ajustes → Cuenta Garmin.
           </ThemedText>
           <Pressable
             onPress={onConnect}

@@ -5,6 +5,8 @@ import {
   requestPermission,
 } from 'react-native-health-connect';
 
+import { fetchGarminApiDays } from '@/features/garmin/garminApi';
+
 import { healthConnectStatus } from './healthConnectSync';
 
 /**
@@ -203,8 +205,8 @@ const recOrigin = (r: Record<string, unknown>): string | null =>
 export async function readGarminSeries(days = 30): Promise<GarminSeries> {
   const empty: GarminSeries = { points: [], source: null };
   if (Platform.OS !== 'android') return empty;
-  if ((await healthConnectStatus()) !== 'available') return empty;
-  if (!(await initialize())) return empty;
+  const hcAvailable =
+    (await healthConnectStatus()) === 'available' && (await initialize());
 
   const sinceIso = since(days);
   const byDay = new Map<string, GarminDayPoint>();
@@ -220,9 +222,13 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
   const see = (r: Record<string, unknown>) => {
     source = source ?? recOrigin(r);
   };
+  // Skips every Health Connect read when the store isn't available —
+  // the Garmin-account merge below still runs on its own.
+  const hcAll = (type: string): Promise<Record<string, unknown>[]> =>
+    hcAvailable ? readAll(type, sinceIso) : Promise.resolve([]);
 
   try {
-    for (const r of await readAll('SleepSession', sinceIso)) {
+    for (const r of await hcAll('SleepSession')) {
       const stagesMs = { deep: 0, light: 0, rem: 0, awake: 0 };
       for (const s of (r.stages as StagedRecord['stages']) ?? []) {
         const ms = Date.parse(s.endTime) - Date.parse(s.startTime);
@@ -242,7 +248,7 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
   } catch { /* permiso ausente */ }
 
   try {
-    for (const r of await readAll('HeartRateVariabilityRmssd', sinceIso)) {
+    for (const r of await hcAll('HeartRateVariabilityRmssd')) {
       const v = r.heartRateVariabilityMillis as number | undefined;
       if (v !== undefined) {
         point(dayKey(recStart(r))).hrvRmssdMs = Math.round(v);
@@ -252,7 +258,7 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
   } catch { /* ignore */ }
 
   try {
-    for (const r of await readAll('RestingHeartRate', sinceIso)) {
+    for (const r of await hcAll('RestingHeartRate')) {
       const v = r.beatsPerMinute as number | undefined;
       if (v !== undefined) {
         point(dayKey(recStart(r))).restingBpm = Math.round(v);
@@ -262,7 +268,7 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
   } catch { /* ignore */ }
 
   try {
-    for (const r of await readAll('RespiratoryRate', sinceIso)) {
+    for (const r of await hcAll('RespiratoryRate')) {
       const v = r.rate as number | undefined;
       if (v !== undefined) {
         const p = point(dayKey(recStart(r)));
@@ -277,7 +283,7 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
   } catch { /* ignore */ }
 
   try {
-    for (const r of await readAll('OxygenSaturation', sinceIso)) {
+    for (const r of await hcAll('OxygenSaturation')) {
       const v = r.percentage as number | undefined;
       if (v !== undefined) {
         const p = point(dayKey(recStart(r)));
@@ -291,7 +297,7 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
   } catch { /* ignore */ }
 
   try {
-    for (const r of await readAll('Steps', sinceIso)) {
+    for (const r of await hcAll('Steps')) {
       const v = r.count as number | undefined;
       if (v !== undefined) {
         const p = point(dayKey(recStart(r)));
@@ -302,7 +308,7 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
   } catch { /* ignore */ }
 
   try {
-    for (const r of await readAll('HeartRate', sinceIso)) {
+    for (const r of await hcAll('HeartRate')) {
       const samples = r.samples as { beatsPerMinute: number }[] | undefined;
       if (!samples?.length) continue;
       const p = point(dayKey(recStart(r)));
@@ -314,6 +320,27 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
       see(r);
     }
   } catch { /* ignore */ }
+
+  // Direct Garmin Connect account read — fills the vitals Garmin never
+  // writes to Health Connect (VFC, SpO2, respiration) plus resting HR,
+  // steps and sleep stages. API values win where both sources have data.
+  try {
+    const apiDays = await fetchGarminApiDays(days);
+    if (apiDays && apiDays.size > 0) {
+      for (const [day, ap] of apiDays) {
+        const p = point(day);
+        Object.assign(
+          p,
+          Object.fromEntries(
+            Object.entries(ap).filter(([, v]) => v !== undefined),
+          ),
+        );
+      }
+      source = 'cuenta Garmin';
+    }
+  } catch {
+    // Token caducado u offline — los datos de Health Connect ya sirven.
+  }
 
   const points = [...byDay.values()].sort((a, b) =>
     a.day.localeCompare(b.day),
