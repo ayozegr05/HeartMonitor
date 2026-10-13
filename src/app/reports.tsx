@@ -744,7 +744,7 @@ function WatchVsBandTrend({
                 type="small"
                 themeColor="textSecondary"
                 style={styles.trendPairLabel}>
-                {d.slice(8)}
+                {dayLabel(d)}
               </ThemedText>
             </View>
           );
@@ -774,6 +774,44 @@ function sleepDurationMs(point: GarminDayPoint): number | null {
   const duration = point.sleep.endedAt - point.sleep.startedAt;
   return duration > 0 ? duration : null;
 }
+
+/** Reloj/Banda selector shared by Resumen, FC and Sueño. */
+function SourceChips({
+  source,
+  onChange,
+}: {
+  source: 'reloj' | 'banda';
+  onChange: (s: 'reloj' | 'banda') => void;
+}) {
+  const theme = useTheme();
+  return (
+    <View style={styles.tabRow}>
+      {(
+        [
+          { key: 'reloj', label: '⌚ Reloj' },
+          { key: 'banda', label: '💚 Banda' },
+        ] as const
+      ).map((s) => (
+        <Pressable
+          key={s.key}
+          onPress={() => onChange(s.key)}
+          style={[
+            styles.chip,
+            { backgroundColor: theme.backgroundElement },
+            source === s.key && {
+              backgroundColor: theme.backgroundSelected,
+            },
+          ]}>
+          <ThemedText type="small">{s.label}</ThemedText>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+/** '14/10' — day/month so chart labels read as dates. */
+const dayLabel = (day: string): string =>
+  `${day.slice(8)}/${day.slice(5, 7)}`;
 
 /** Narrow Y-axis column for the mini bar charts: top and bottom scale labels. */
 function ChartAxis({ top, bottom }: { top: string; bottom: string }) {
@@ -880,7 +918,7 @@ function WatchSleepTrendInline({ series }: { series: GarminSeries | null }) {
               type="small"
               themeColor="textSecondary"
               style={styles.trendPairLabel}>
-              {point.day.slice(8)}
+              {dayLabel(point.day)}
             </ThemedText>
           </View>
         ))}
@@ -906,7 +944,11 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
     .slice(-14);
   if (points.length === 0) return null;
 
-  const max = 100;
+  const values = points.flatMap((p) =>
+    [p.spo2AvgPct, p.spo2MinPct].filter((v): v is number => v !== undefined),
+  );
+  const floor = Math.min(80, Math.floor(Math.min(...values)));
+  const span = 100 - floor;
   const lastAvg = Math.round(points.at(-1)?.spo2AvgPct ?? 0);
   const lastMin =
     points.at(-1)?.spo2MinPct !== undefined
@@ -923,7 +965,7 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
         </ThemedText>
       </ThemedView>
       <View style={styles.trendRow}>
-        <ChartAxis top="100%" bottom="0" />
+        <ChartAxis top="100%" bottom={`${floor}%`} />
         {points.map((point) => (
           <View key={point.day} style={styles.trendPair}>
             <View style={styles.trendPairBars}>
@@ -931,7 +973,7 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
                 style={[
                   styles.trendBar,
                   {
-                    height: `${Math.max(4, ((point.spo2AvgPct ?? 0) / max) * 100)}%`,
+                    height: `${Math.max(4, (((point.spo2AvgPct ?? floor) - floor) / span) * 100)}%`,
                     backgroundColor: '#06B6D4',
                   },
                 ]}
@@ -940,7 +982,7 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
                 style={[
                   styles.trendBar,
                   {
-                    height: `${Math.max(4, ((point.spo2MinPct ?? 0) / max) * 100)}%`,
+                    height: `${Math.max(4, (((point.spo2MinPct ?? floor) - floor) / span) * 100)}%`,
                     backgroundColor: '#F59E0B',
                   },
                 ]}
@@ -950,15 +992,16 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
               type="small"
               themeColor="textSecondary"
               style={styles.trendPairLabel}>
-              {point.day.slice(8)}
+              {dayLabel(point.day)}
             </ThemedText>
           </View>
         ))}
       </View>
       <ThemedText type="small" themeColor="textSecondary">
         última {lastAvg}%{lastMin !== undefined ? ` (mín ${lastMin}%)` : ''} ·
-        cian = media · ámbar = mínima. Sirve para observar tendencias; una
-        lectura aislada no diagnostica apnea.
+        cada día dos barras: cian = media de la noche, ámbar = mínima. La
+        escala empieza en {floor}% para que las bajadas se vean. Sirve para
+        observar tendencias; una lectura aislada no diagnostica apnea.
       </ThemedText>
     </ThemedView>
   );
@@ -975,10 +1018,12 @@ function GlobalSummaryCard({
   items,
   watch,
   weekly,
+  source,
 }: {
   items: SessionWithReport[];
   watch: GarminSeries | null;
   weekly: WeeklyReport | null;
+  source: 'reloj' | 'banda';
 }) {
   const points = watch?.points ?? [];
   const sleepDurations = points
@@ -1025,7 +1070,8 @@ function GlobalSummaryCard({
       `❤️ Semana: ${weekly.eventCount} evento${weekly.eventCount === 1 ? '' : 's'} · ${weekly.pauseCount} pausa${weekly.pauseCount === 1 ? '' : 's'}${weekly.avgBpm !== null ? ` · FC media ${weekly.avgBpm} bpm` : ''}`,
     );
 
-  if (watchLines.length === 0 && bandLines.length === 0) return null;
+  const lines = source === 'reloj' ? watchLines : bandLines;
+  if (lines.length === 0) return null;
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
       <ThemedView style={styles.cardHeader}>
@@ -1036,28 +1082,43 @@ function GlobalSummaryCard({
           estimaciones para seguir tendencias, no diagnósticos
         </ThemedText>
       </ThemedView>
-      {watchLines.length > 0 && (
-        <>
-          <ThemedText type="smallBold">⌚ Reloj</ThemedText>
-          {watchLines.map((line) => (
-            <ThemedText key={line} type="small">
-              {line}
-            </ThemedText>
-          ))}
-        </>
-      )}
-      {bandLines.length > 0 && (
-        <>
-          <ThemedText type="smallBold" style={{ paddingTop: Spacing.one }}>
-            💚 Banda
-          </ThemedText>
-          {bandLines.map((line) => (
-            <ThemedText key={line} type="small">
-              {line}
-            </ThemedText>
-          ))}
-        </>
-      )}
+      {lines.map((line) => (
+        <ThemedText key={line} type="small">
+          {line}
+        </ThemedText>
+      ))}
+    </ThemedView>
+  );
+}
+
+/** Watch-day row for the FC tab: daily HR range, resting HR and steps. */
+function WatchDayCard({ point }: { point: GarminDayPoint }) {
+  const bits: string[] = [];
+  if (point.hrMinBpm !== undefined || point.hrMaxBpm !== undefined) {
+    bits.push(`❤️ FC día ${point.hrMinBpm ?? '?'}–${point.hrMaxBpm ?? '?'} bpm`);
+  }
+  if (point.restingBpm !== undefined) {
+    bits.push(`🛌 reposo ${point.restingBpm} bpm`);
+  }
+  if (point.steps !== undefined) {
+    bits.push(`👣 ${point.steps.toLocaleString('es-ES')} pasos`);
+  }
+  if (point.hrvRmssdMs !== undefined) {
+    bits.push(`📈 VFC ${point.hrvRmssdMs} ms`);
+  }
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          {dayLabel(point.day)}
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          reloj
+        </ThemedText>
+      </ThemedView>
+      <ThemedText type="small">
+        {bits.length > 0 ? bits.join(' · ') : 'sin datos de FC este día'}
+      </ThemedText>
     </ThemedView>
   );
 }
@@ -1330,7 +1391,7 @@ export default function ReportsScreen() {
     () => new Set(),
   );
   const [garmin, setGarmin] = useState<GarminSeries | null>(null);
-  const [sleepSource, setSleepSource] = useState<'reloj' | 'banda'>('reloj');
+  const [source, setSource] = useState<'reloj' | 'banda'>('reloj');
 
   /** Watch nights, newest first — every day with overnight data. */
   const watchRows = (garmin?.points ?? [])
@@ -1560,57 +1621,61 @@ export default function ReportsScreen() {
             renderItem={null}
             ListHeaderComponent={
               <>
+                <SourceChips source={source} onChange={setSource} />
                 <GlobalSummaryCard
                   items={items}
                   watch={garmin}
                   weekly={weekly}
+                  source={source}
                 />
-                {(garmin?.points.length ?? 0) > 0 && (
-                  <>
-                    <ThemedText type="smallBold" style={styles.sectionTitle}>
-                      ⌚ Reloj — informe de la última noche
-                    </ThemedText>
+                {source === 'reloj' ? (
+                  (garmin?.points.length ?? 0) > 0 ? (
                     <GarminCard series={garmin} onConnect={connectGarmin} />
-                  </>
-                )}
-                <ThemedText type="smallBold" style={styles.sectionTitle}>
-                  💚 Banda
-                </ThemedText>
-                {/* Morning report — tap to read the night's verdict */}
-                <ThemedView type="backgroundElement" style={styles.card}>
-                  <ThemedView style={styles.cardHeader}>
-                    <ThemedText type="smallBold" style={styles.cardTitle}>
-                      🌅 Informe de la noche
-                    </ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {lastMorningReport
-                        ? new Date(lastMorningReport.at).toLocaleString(
-                            undefined,
-                            { day: 'numeric', month: 'short' },
-                          )
-                        : 'aún no emitido'}
-                    </ThemedText>
-                  </ThemedView>
-                  {lastMorningReport ? (
-                    <ThemedText type="small">
-                      {lastMorningReport.text}
-                    </ThemedText>
                   ) : (
                     <ThemedText type="small" themeColor="textSecondary">
-                      Se genera al despertar tras una noche monitorizada con
-                      la banda — también llega como notificación.
+                      Sin datos del reloj todavía — vincula tu cuenta Garmin
+                      en Ajustes.
                     </ThemedText>
-                  )}
-                </ThemedView>
+                  )
+                ) : (
+                  <>
+                    {/* Morning report — tap to read the night's verdict */}
+                    <ThemedView type="backgroundElement" style={styles.card}>
+                      <ThemedView style={styles.cardHeader}>
+                        <ThemedText type="smallBold" style={styles.cardTitle}>
+                          🌅 Informe de la noche
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {lastMorningReport
+                            ? new Date(lastMorningReport.at).toLocaleString(
+                                undefined,
+                                { day: 'numeric', month: 'short' },
+                              )
+                            : 'aún no emitido'}
+                        </ThemedText>
+                      </ThemedView>
+                      {lastMorningReport ? (
+                        <ThemedText type="small">
+                          {lastMorningReport.text}
+                        </ThemedText>
+                      ) : (
+                        <ThemedText type="small" themeColor="textSecondary">
+                          Se genera al despertar tras una noche monitorizada
+                          con la banda — también llega como notificación.
+                        </ThemedText>
+                      )}
+                    </ThemedView>
 
-                {weekly && weekly.sessionsCount > 0 && (
-                  <WeeklyCard weekly={weekly} />
-                )}
-                {!weekly && (
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Sin datos semanales todavía — monitoriza una noche para
-                    generar el primer resumen.
-                  </ThemedText>
+                    {weekly && weekly.sessionsCount > 0 && (
+                      <WeeklyCard weekly={weekly} />
+                    )}
+                    {!weekly && (
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Sin datos semanales todavía — monitoriza una noche
+                        para generar el primer resumen.
+                      </ThemedText>
+                    )}
+                  </>
                 )}
               </>
             }
@@ -1620,6 +1685,24 @@ export default function ReportsScreen() {
 
         {tab === 'fc' && (
           <>
+            <SourceChips source={source} onChange={setSource} />
+            {source === 'reloj' ? (
+              <FlatList
+                data={watchRows}
+                keyExtractor={(r) => r.key}
+                contentContainerStyle={{ paddingBottom: BottomTabInset }}
+                ListEmptyComponent={
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Sin días del reloj todavía — vincula tu cuenta Garmin en
+                    Ajustes.
+                  </ThemedText>
+                }
+                renderItem={({ item }) => (
+                  <WatchDayCard point={item.point} />
+                )}
+              />
+            ) : (
+              <>
             {(hasAnyEvents || onlyWithEvents) && (
               <Pressable
                 onPress={() => setOnlyWithEvents((v) => !v)}
@@ -1669,6 +1752,8 @@ export default function ReportsScreen() {
                 )
               }
             />
+              </>
+            )}
           </>
         )}
 
@@ -1732,28 +1817,8 @@ export default function ReportsScreen() {
 
         {tab === 'sueno' && (
           <>
-            <View style={styles.tabRow}>
-              {(
-                [
-                  { key: 'reloj', label: '⌚ Reloj' },
-                  { key: 'banda', label: '💚 Banda' },
-                ] as const
-              ).map((s) => (
-                <Pressable
-                  key={s.key}
-                  onPress={() => setSleepSource(s.key)}
-                  style={[
-                    styles.chip,
-                    { backgroundColor: theme.backgroundElement },
-                    sleepSource === s.key && {
-                      backgroundColor: theme.backgroundSelected,
-                    },
-                  ]}>
-                  <ThemedText type="small">{s.label}</ThemedText>
-                </Pressable>
-              ))}
-            </View>
-            {sleepSource === 'reloj' ? (
+            <SourceChips source={source} onChange={setSource} />
+            {source === 'reloj' ? (
               <FlatList
                 data={watchRows}
                 keyExtractor={(r) => r.key}
