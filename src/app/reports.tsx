@@ -35,6 +35,7 @@ import {
     requestGarminReadAccess,
     type GarminDayPoint,
     type GarminSeries,
+    type GarminSleepSummary,
 } from '@/features/healthconnect/garminSummary';
 import { useMonitorStore } from '@/features/monitoring/useMonitorStore';
 import { shareWeeklyPdf } from '@/features/reports/exportWeeklyPdf';
@@ -589,7 +590,6 @@ function GarminCard({
               .filter(Boolean)
               .join(' · ')}
           </ThemedText>
-          <WatchSleepTrendInline series={series} />
         </>
       ) : (
         <>
@@ -715,7 +715,7 @@ function WatchVsBandTrend({
       </ThemedView>
       <View style={styles.trendRow}>
         <ChartAxis top={`${max} ms`} bottom="0" />
-        {days.map((d) => {
+        {days.map((d, i) => {
           const ours = oursByDay.get(d);
           const theirs = watchByDay.get(d);
           return (
@@ -744,7 +744,7 @@ function WatchVsBandTrend({
                 type="small"
                 themeColor="textSecondary"
                 style={styles.trendPairLabel}>
-                {dayLabel(d)}
+                {i % 2 === 0 || i === days.length - 1 ? dayLabel(d) : ''}
               </ThemedText>
             </View>
           );
@@ -879,8 +879,8 @@ function hrvPhrase(values: number[]): string {
  * sleep the watch reported, newest on the right, with a plain-language
  * comparison against the week before.
  */
-function WatchSleepTrendInline({ series }: { series: GarminSeries | null }) {
-  const points = (series?.points ?? [])
+function WatchSleepTrend({ watch }: { watch: GarminSeries | null }) {
+  const points = (watch?.points ?? [])
     .map((point) => ({ point, duration: sleepDurationMs(point) }))
     .filter(
       (entry): entry is { point: GarminDayPoint; duration: number } =>
@@ -895,13 +895,18 @@ function WatchSleepTrendInline({ series }: { series: GarminSeries | null }) {
   const min = Math.min(...values);
 
   return (
-    <>
-      <ThemedText type="smallBold" style={{ paddingTop: Spacing.two }}>
-        Horas dormidas por noche
-      </ThemedText>
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          Horas dormidas por noche
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          últimas {points.length} noches
+        </ThemedText>
+      </ThemedView>
       <View style={styles.trendRow}>
         <ChartAxis top={`${Math.round(max / 3600000)} h`} bottom="0" />
-        {points.map(({ point, duration }) => (
+        {points.map(({ point, duration }, i) => (
           <View key={point.day} style={styles.trendPair}>
             <View style={styles.trendPairBars}>
               <View
@@ -918,7 +923,7 @@ function WatchSleepTrendInline({ series }: { series: GarminSeries | null }) {
               type="small"
               themeColor="textSecondary"
               style={styles.trendPairLabel}>
-              {dayLabel(point.day)}
+              {i % 2 === 0 || i === points.length - 1 ? dayLabel(point.day) : ''}
             </ThemedText>
           </View>
         ))}
@@ -930,7 +935,7 @@ function WatchSleepTrendInline({ series }: { series: GarminSeries | null }) {
       <ThemedText type="small" themeColor="textSecondary">
         {sleepPhrase(values)}
       </ThemedText>
-    </>
+    </ThemedView>
   );
 }
 
@@ -966,24 +971,20 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
       </ThemedView>
       <View style={styles.trendRow}>
         <ChartAxis top="100%" bottom={`${floor}%`} />
-        {points.map((point) => (
+        {points.map((point, i) => (
           <View key={point.day} style={styles.trendPair}>
             <View style={styles.trendPairBars}>
               <View
                 style={[
                   styles.trendBar,
                   {
-                    height: `${Math.max(4, (((point.spo2AvgPct ?? floor) - floor) / span) * 100)}%`,
-                    backgroundColor: '#06B6D4',
-                  },
-                ]}
-              />
-              <View
-                style={[
-                  styles.trendBar,
-                  {
-                    height: `${Math.max(4, (((point.spo2MinPct ?? floor) - floor) / span) * 100)}%`,
-                    backgroundColor: '#F59E0B',
+                    height: `${Math.max(4, (((point.spo2MinPct ?? point.spo2AvgPct ?? floor) - floor) / span) * 100)}%`,
+                    backgroundColor:
+                      (point.spo2MinPct ?? point.spo2AvgPct ?? 0) >= 92
+                        ? '#2E7D32'
+                        : (point.spo2MinPct ?? point.spo2AvgPct ?? 0) >= 88
+                          ? '#F59E0B'
+                          : '#E5484D',
                   },
                 ]}
               />
@@ -992,16 +993,16 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
               type="small"
               themeColor="textSecondary"
               style={styles.trendPairLabel}>
-              {dayLabel(point.day)}
+              {i % 2 === 0 || i === points.length - 1 ? dayLabel(point.day) : ''}
             </ThemedText>
           </View>
         ))}
       </View>
       <ThemedText type="small" themeColor="textSecondary">
-        última {lastAvg}%{lastMin !== undefined ? ` (mín ${lastMin}%)` : ''} ·
-        cada día dos barras: cian = media de la noche, ámbar = mínima. La
-        escala empieza en {floor}% para que las bajadas se vean. Sirve para
-        observar tendencias; una lectura aislada no diagnostica apnea.
+        Una barra por noche = la <ThemedText type="smallBold">mínima</ThemedText>{' '}
+        de SpO₂ (verde ≥92% · ámbar 88–92% · rojo &lt;88%). Escala desde{' '}
+        {floor}%. última {lastMin !== undefined ? `${lastMin}` : lastAvg}%.
+        Sirve para tendencias; una lectura aislada no diagnostica apnea.
       </ThemedText>
     </ThemedView>
   );
@@ -1087,6 +1088,104 @@ function GlobalSummaryCard({
           {line}
         </ThemedText>
       ))}
+    </ThemedView>
+  );
+}
+
+/** Stacked phases bar: deep / REM / light / awake proportions of one night. */
+function SleepPhasesBar({ stages }: { stages: GarminSleepSummary['stagesMs'] }) {
+  const total = stages.deep + stages.rem + stages.light + stages.awake;
+  if (total <= 0) return null;
+  const segs: { key: string; ms: number; color: string; label: string }[] = [
+    { key: 'deep', ms: stages.deep, color: '#312E81', label: 'profundo' },
+    { key: 'rem', ms: stages.rem, color: '#8B5CF6', label: 'REM' },
+    { key: 'light', ms: stages.light, color: '#7DD3FC', label: 'ligero' },
+    { key: 'awake', ms: stages.awake, color: '#9CA3AF', label: 'despierto' },
+  ];
+  return (
+    <>
+      <View style={styles.phasesBar}>
+        {segs
+          .filter((s) => s.ms > 0)
+          .map((s) => (
+            <View
+              key={s.key}
+              style={{ flex: s.ms, backgroundColor: s.color }}
+            />
+          ))}
+      </View>
+      <View style={styles.phasesLegend}>
+        {segs.map((s) => (
+          <ThemedText key={s.key} type="small" themeColor="textSecondary">
+            <ThemedText type="small" style={{ color: s.color }}>■</ThemedText>{' '}
+            {s.label} {Math.round((s.ms / total) * 100)}%
+          </ThemedText>
+        ))}
+      </View>
+    </>
+  );
+}
+
+/** Plain-language note about the night's phase mix (reference ranges). */
+function phasePhrase(stages: GarminSleepSummary['stagesMs']): string | null {
+  const total = stages.deep + stages.rem + stages.light + stages.awake;
+  if (total <= 0) return null;
+  const pct = (ms: number) => (ms / total) * 100;
+  const notes: string[] = [];
+  if (pct(stages.deep) < 12) notes.push('poco profundo');
+  if (pct(stages.deep) > 28) notes.push('mucho profundo');
+  if (pct(stages.rem) < 15) notes.push('poco REM');
+  if (pct(stages.awake) > 15) notes.push('bastante tiempo despierto');
+  return notes.length === 0
+    ? 'Fases dentro de lo habitual.'
+    : `Fases: ${notes.join(', ')} respecto a lo habitual.`;
+}
+
+/** Watch morning report — same shape as the band's informe matutino. */
+function WatchMorningCard({ point }: { point: GarminDayPoint }) {
+  const s = point.sleep;
+  const bits: string[] = [];
+  if (point.hrvRmssdMs !== undefined) bits.push(`VFC ${point.hrvRmssdMs} ms`);
+  if (point.restingBpm !== undefined) bits.push(`reposo ${point.restingBpm} bpm`);
+  if (point.respirationPerMin !== undefined)
+    bits.push(`resp ${point.respirationPerMin.toFixed(1)}/min`);
+  if (point.spo2AvgPct !== undefined)
+    bits.push(
+      `SpO₂ ${Math.round(point.spo2AvgPct)}%` +
+        (point.spo2MinPct !== undefined ? ` (mín ${Math.round(point.spo2MinPct)}%)` : ''),
+    );
+  const phrase = s ? phasePhrase(s.stagesMs) : null;
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView style={styles.cardHeader}>
+        <ThemedText type="smallBold" style={styles.cardTitle}>
+          🌅 Informe matutino · reloj
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {dayLabel(point.day)}
+        </ThemedText>
+      </ThemedView>
+      {s ? (
+        <>
+          <ThemedText type="small">
+            {formatClock(s.startedAt)} → {formatClock(s.endedAt)} ·{' '}
+            {formatDuration(s.endedAt - s.startedAt)}
+          </ThemedText>
+          <SleepPhasesBar stages={s.stagesMs} />
+          {phrase && (
+            <ThemedText type="small" themeColor="textSecondary">
+              {phrase}
+            </ThemedText>
+          )}
+        </>
+      ) : (
+        <ThemedText type="small" themeColor="textSecondary">
+          El reloj no registró sueño esta noche.
+        </ThemedText>
+      )}
+      {bits.length > 0 && (
+        <ThemedText type="small">{bits.join(' · ')}</ThemedText>
+      )}
     </ThemedView>
   );
 }
@@ -1245,7 +1344,7 @@ function RmssdTrend() {
                 style={[
                   styles.trendBar,
                   {
-                    height: Math.max(4, (b.value / max) * 48),
+                    height: Math.max(4, (b.value / max) * 72),
                     backgroundColor: rmssdColor(b.value),
                   },
                 ]}
@@ -1630,12 +1729,25 @@ export default function ReportsScreen() {
                 />
                 {source === 'reloj' ? (
                   (garmin?.points.length ?? 0) > 0 ? (
-                    <GarminCard series={garmin} onConnect={connectGarmin} />
+                    <>
+                      <WatchMorningCard
+                        point={
+                          [...garmin!.points]
+                            .reverse()
+                            .find(
+                              (p) =>
+                                p.sleep ||
+                                p.hrvRmssdMs !== undefined ||
+                                p.spo2AvgPct !== undefined ||
+                                p.respirationPerMin !== undefined,
+                            )!
+                        }
+                      />
+                      <WatchSleepTrend watch={garmin} />
+                      <WatchSpo2Trend watch={garmin} />
+                    </>
                   ) : (
-                    <ThemedText type="small" themeColor="textSecondary">
-                      Sin datos del reloj todavía — vincula tu cuenta Garmin
-                      en Ajustes.
-                    </ThemedText>
+                    <GarminCard series={garmin} onConnect={connectGarmin} />
                   )
                 ) : (
                   <>
@@ -1643,7 +1755,7 @@ export default function ReportsScreen() {
                     <ThemedView type="backgroundElement" style={styles.card}>
                       <ThemedView style={styles.cardHeader}>
                         <ThemedText type="smallBold" style={styles.cardTitle}>
-                          🌅 Informe de la noche
+                          🌅 Informe matutino · banda
                         </ThemedText>
                         <ThemedText type="small" themeColor="textSecondary">
                           {lastMorningReport
@@ -1825,7 +1937,10 @@ export default function ReportsScreen() {
                 contentContainerStyle={{ paddingBottom: BottomTabInset }}
                 ListHeaderComponent={
                   <>
-                    <GarminCard series={garmin} onConnect={connectGarmin} />
+                    {(watchRows[0]?.point ?? null) !== null && (
+                      <WatchMorningCard point={watchRows[0].point} />
+                    )}
+                    <WatchSleepTrend watch={garmin} />
                     <WatchSpo2Trend watch={garmin} />
                     <WatchVsBandTrend items={items} watch={garmin} />
                   </>
@@ -1945,7 +2060,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 3,
-    height: 52,
+    height: 96,
     paddingTop: 4,
   },
   trendBar: {
@@ -1974,6 +2089,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   axisLabel: { fontSize: 9, lineHeight: 11 },
+  phasesBar: {
+    flexDirection: 'row',
+    height: 14,
+    borderRadius: 7,
+    overflow: 'hidden',
+  },
+  phasesLegend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+  },
   trendChips: {
     flexDirection: 'row',
     gap: 6,
