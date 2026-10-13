@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Alert, FlatList, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { HrChart } from '@/components/hr-chart';
@@ -773,7 +773,7 @@ function WatchVsBandTrend({
                   type="small"
                   themeColor="textSecondary"
                   style={styles.dateTickText}>
-                  {dayLabel(d)}
+                  {wdLabel(d)}
                 </ThemedText>
               </View>
             </View>
@@ -868,6 +868,27 @@ function ChartAxis({ top, bottom }: { top: string; bottom: string }) {
 }
 
 /** Average of the older half vs the newer half of a chronological series. */
+const WD_INITIALS = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+const wdLabel = (day: string) => {
+  const d = new Date(`${day}T12:00:00`);
+  return `${WD_INITIALS[d.getDay()]} ${Number(day.slice(8))}`;
+};
+
+type RangeKey = '7' | '14' | '30' | '90' | 'custom';
+const RANGE_DAYS: Record<Exclude<RangeKey, 'custom'>, number> = { '7': 7, '14': 14, '30': 30, '90': 90 };
+const rangeFilter = <T extends { day: string }>(
+  pts: T[],
+  range: RangeKey,
+  custom: [string, string] | null,
+): T[] =>
+  range === 'custom' && custom
+    ? pts.filter((p) => p.day >= custom[0] && p.day <= custom[1])
+    : pts.slice(-(RANGE_DAYS[range as Exclude<RangeKey, 'custom'>] ?? 7));
+
+const dm = (day: string) => `${day.slice(8)}/${day.slice(5, 7)}`;
+const rangeCaption = (pts: { day: string }[]) =>
+  pts.length > 1 ? `del ${dm(pts[0].day)} al ${dm(pts[pts.length - 1].day)}` : '';
+
 function halfDelta(values: number[]): { prev: number; recent: number } | null {
   if (values.length < 4) return null;
   const split = Math.floor(values.length / 2);
@@ -904,25 +925,240 @@ function hrvPhrase(values: number[]): string {
   } de la semana anterior (~${mean} ms de media)`;
 }
 
+const MONTH_NAMES = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+];
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const dayKey = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+/** Chips choosing how many nights a chart shows, plus a custom range. */
+function RangeChips({
+  value,
+  onChange,
+}: {
+  value: RangeKey;
+  onChange: (k: RangeKey) => void;
+}) {
+  const theme = useTheme();
+  const OPTIONS: { key: RangeKey; label: string }[] = [
+    { key: '7', label: '7D' },
+    { key: '14', label: '14D' },
+    { key: '30', label: '30D' },
+    { key: '90', label: '90D' },
+    { key: 'custom', label: 'elegir…' },
+  ];
+  return (
+    <View style={styles.trendChips}>
+      {OPTIONS.map((o) => (
+        <Pressable
+          key={o.key}
+          onPress={() => onChange(o.key)}
+          style={[
+            styles.trendChip,
+            value === o.key && { backgroundColor: theme.backgroundSelected },
+          ]}>
+          <ThemedText
+            type="small"
+            themeColor={value === o.key ? 'text' : 'textSecondary'}>
+            {o.label}
+          </ThemedText>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+/** Simple month calendar for picking a custom [start, end] day range. */
+function RangeCalendarModal({
+  visible,
+  onClose,
+  onApply,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onApply: (start: string, end: string) => void;
+}) {
+  const theme = useTheme();
+  const now = new Date();
+  const [cursor, setCursor] = useState(
+    () => new Date(now.getFullYear(), now.getMonth(), 1),
+  );
+  const [start, setStart] = useState<string | null>(null);
+  const [end, setEnd] = useState<string | null>(null);
+
+  const blanks = (cursor.getDay() + 6) % 7; // week starts Monday
+  const daysInMonth = new Date(
+    cursor.getFullYear(),
+    cursor.getMonth() + 1,
+    0,
+  ).getDate();
+  const cells: (string | null)[] = [
+    ...Array<string | null>(blanks).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) =>
+      dayKey(new Date(cursor.getFullYear(), cursor.getMonth(), i + 1)),
+    ),
+  ];
+  const today = dayKey(now);
+  const pick = (day: string) => {
+    if (day > today) return;
+    if (!start || end) {
+      setStart(day);
+      setEnd(null);
+    } else if (day < start) {
+      setStart(day);
+    } else {
+      setEnd(day);
+    }
+  };
+  const moveMonth = (delta: number) =>
+    setCursor(
+      (c) => new Date(c.getFullYear(), c.getMonth() + delta, 1),
+    );
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.calBackdrop} onPress={onClose}>
+        <Pressable
+          style={[styles.calCard, { backgroundColor: theme.backgroundElement }]}
+          onPress={() => {}}>
+          <View style={styles.calHeader}>
+            <Pressable onPress={() => moveMonth(-1)} style={styles.calNav}>
+              <ThemedText type="smallBold">‹</ThemedText>
+            </Pressable>
+            <ThemedText type="smallBold">
+              {MONTH_NAMES[cursor.getMonth()]} {cursor.getFullYear()}
+            </ThemedText>
+            <Pressable onPress={() => moveMonth(1)} style={styles.calNav}>
+              <ThemedText type="smallBold">›</ThemedText>
+            </Pressable>
+          </View>
+          <View style={styles.calWeekRow}>
+            {'LMXJVSD'.split('').map((d, i) => (
+              <ThemedText
+                key={i}
+                type="small"
+                themeColor="textSecondary"
+                style={styles.calWeekDay}>
+                {d}
+              </ThemedText>
+            ))}
+          </View>
+          <View style={styles.calGrid}>
+            {cells.map((d, i) => {
+              const selected = d !== null && (d === start || d === end);
+              const inside =
+                d !== null &&
+                start !== null &&
+                end !== null &&
+                d > start &&
+                d < end;
+              return (
+                <Pressable
+                  key={i}
+                  onPress={() => d && pick(d)}
+                  style={[
+                    styles.calCell,
+                    inside && { backgroundColor: theme.backgroundSelected },
+                    selected && { backgroundColor: '#3B82F6' },
+                  ]}>
+                  <ThemedText
+                    type="small"
+                    style={
+                      selected
+                        ? { color: '#fff' }
+                        : d !== null && d > today
+                          ? { opacity: 0.3 }
+                          : undefined
+                    }>
+                    {d ? Number(d.slice(8)) : ''}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </View>
+          <View style={styles.calFooter}>
+            <ThemedText type="small" themeColor="textSecondary">
+              {start
+                ? end
+                  ? `${dm(start)} – ${dm(end)}`
+                  : `${dm(start)} – toca el último día`
+                : 'toca el primer día'}
+            </ThemedText>
+            <View style={styles.trendChips}>
+              <Pressable onPress={onClose} style={styles.trendChip}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  cancelar
+                </ThemedText>
+              </Pressable>
+              <Pressable
+                disabled={!start}
+                onPress={() => {
+                  onApply(start!, end ?? start!);
+                  onClose();
+                }}
+                style={[styles.trendChip, { backgroundColor: '#3B82F6' }]}>
+                <ThemedText type="small" style={{ color: '#fff' }}>
+                  aplicar
+                </ThemedText>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/** Shared range state for watch trend cards. */
+function useNightRange(): {
+  range: RangeKey;
+  custom: [string, string] | null;
+  chips: ReactNode;
+  modal: ReactNode;
+} {
+  const [range, setRange] = useState<RangeKey>('14');
+  const [custom, setCustom] = useState<[string, string] | null>(null);
+  const [calOpen, setCalOpen] = useState(false);
+  const chips = (
+    <RangeChips
+      value={range}
+      onChange={(k) => {
+        setRange(k);
+        if (k === 'custom') setCalOpen(true);
+      }}
+    />
+  );
+  const modal = (
+    <RangeCalendarModal
+      visible={calOpen}
+      onClose={() => setCalOpen(false)}
+      onApply={(s, e) => setCustom([s, e])}
+    />
+  );
+  return { range, custom, chips, modal };
+}
+
 /**
  * Sleep-duration bars folded into the Garmin card: last 14 nights of
  * sleep the watch reported, newest on the right, with a plain-language
  * comparison against the week before.
  */
 function WatchSleepTrend({ watch }: { watch: GarminSeries | null }) {
-  const points = (watch?.points ?? [])
+  const { range, custom, chips, modal } = useNightRange();
+  const all = watch?.points ?? [];
+  const points = rangeFilter(all, range, custom)
     .map((point) => ({ point, duration: sleepDurationMs(point) }))
     .filter(
       (entry): entry is { point: GarminDayPoint; duration: number } =>
         entry.duration !== null,
-    )
-    .slice(-14);
-  if (points.length === 0) return null;
+    );
+  if (all.length === 0) return null;
 
   const values = points.map((entry) => entry.duration);
   const max = Math.max(...values, 8 * 60 * 60 * 1000);
-  const last = points.at(-1)!;
-  const min = Math.min(...values);
+  const last = points.at(-1);
+  const min = values.length ? Math.min(...values) : 0;
 
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
@@ -931,9 +1167,11 @@ function WatchSleepTrend({ watch }: { watch: GarminSeries | null }) {
           Horas dormidas por noche
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          últimas {points.length} noches
+          {rangeCaption(points.map((e) => e.point))}
         </ThemedText>
       </ThemedView>
+      <View style={styles.rangeRow}>{chips}</View>
+      {modal}
       <View style={styles.trendRow}>
         <ChartAxis top={`${Math.round(max / 3600000)} h`} bottom="0" />
         {points.map(({ point, duration }, i) => (
@@ -954,19 +1192,27 @@ function WatchSleepTrend({ watch }: { watch: GarminSeries | null }) {
                 type="small"
                 themeColor="textSecondary"
                 style={styles.dateTickText}>
-                {dayLabel(point.day)}
+                {wdLabel(point.day)}
               </ThemedText>
             </View>
           </View>
         ))}
       </View>
-      <ThemedText type="small" themeColor="textSecondary">
-        última {formatDuration(last.duration)} · entre{' '}
-        {formatDuration(min)} y {formatDuration(max)}
-      </ThemedText>
-      <ThemedText type="small" themeColor="textSecondary">
-        {sleepPhrase(values)}
-      </ThemedText>
+      {points.length === 0 ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          Sin noches en este rango.
+        </ThemedText>
+      ) : (
+        <>
+          <ThemedText type="small" themeColor="textSecondary">
+            última {formatDuration(last!.duration)} · entre{' '}
+            {formatDuration(min)} y {formatDuration(max)}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {sleepPhrase(values)}
+          </ThemedText>
+        </>
+      )}
     </ThemedView>
   );
 }
@@ -975,13 +1221,13 @@ function WatchSleepTrend({ watch }: { watch: GarminSeries | null }) {
 function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
   const theme = useTheme();
   const [mode, setMode] = useState<'min' | 'avg'>('min');
-  const points = (watch?.points ?? [])
-    .filter(
-      (point) =>
-        point.spo2AvgPct !== undefined || point.spo2MinPct !== undefined,
-    )
-    .slice(-14);
-  if (points.length === 0) return null;
+  const { range, custom, chips, modal } = useNightRange();
+  const all = (watch?.points ?? []).filter(
+    (point) =>
+      point.spo2AvgPct !== undefined || point.spo2MinPct !== undefined,
+  );
+  const points = rangeFilter(all, range, custom);
+  if (all.length === 0) return null;
 
   const values = points.flatMap((p) =>
     [p.spo2AvgPct, p.spo2MinPct].filter((v): v is number => v !== undefined),
@@ -1024,6 +1270,18 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
           ))}
         </View>
       </ThemedView>
+      <View style={styles.rangeRow}>
+        {chips}
+        <ThemedText type="small" themeColor="textSecondary">
+          {rangeCaption(points)}
+        </ThemedText>
+      </View>
+      {modal}
+      {points.length === 0 ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          Sin noches en este rango.
+        </ThemedText>
+      ) : (
       <View style={styles.trendRow}>
         <ChartAxis top="100%" bottom={`${floor}%`} />
         {points.map((point, i) => {
@@ -1050,13 +1308,14 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
                 type="small"
                 themeColor="textSecondary"
                 style={styles.dateTickText}>
-                {dayLabel(point.day)}
+                {wdLabel(point.day)}
               </ThemedText>
             </View>
           </View>
           );
         })}
       </View>
+      )}
       <ThemedText type="small" themeColor="textSecondary">
         Una barra por noche = la{' '}
         <ThemedText type="smallBold">
@@ -1633,7 +1892,7 @@ export default function ReportsScreen() {
       listEcgSessions()
         .then(setSessions)
         .catch(() => setSessions([]));
-      readGarminSeries(30)
+      readGarminSeries(91)
         .then(setGarmin)
         .catch(() => setGarmin(null));
     }, [thresholds]),
@@ -1641,7 +1900,7 @@ export default function ReportsScreen() {
 
   const connectGarmin = (): Promise<void> =>
     requestGarminReadAccess()
-      .then((granted) => (granted ? readGarminSeries(30) : null))
+      .then((granted) => (granted ? readGarminSeries(91) : null))
       .then(setGarmin)
       .catch(() => setGarmin(null));
 
@@ -2171,17 +2430,49 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   axisLabel: { fontSize: 9, lineHeight: 11 },
-  dateTick: { width: '100%', height: 24, overflow: 'visible' },
-  dateTickText: {
-    fontSize: 9,
-    width: 34,
-    transform: [{ rotate: '-45deg' }, { translateX: 6 }],
+  dateTick: { width: '100%', height: 13, overflow: 'visible' },
+  dateTickText: { fontSize: 8, width: '100%', textAlign: 'center' },
+  rangeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.two,
   },
   phasesBar: {
     flexDirection: 'row',
     height: 14,
     borderRadius: 7,
     overflow: 'hidden',
+  },
+  calBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    padding: Spacing.four,
+  },
+  calCard: { borderRadius: 16, padding: Spacing.three },
+  calHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.two,
+  },
+  calNav: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
+  calWeekRow: { flexDirection: 'row' },
+  calWeekDay: { width: `${100 / 7}%`, textAlign: 'center' },
+  calGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  calCell: {
+    width: `${100 / 7}%`,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+  },
+  calFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: Spacing.two,
   },
   phasesLegend: {
     flexDirection: 'row',
