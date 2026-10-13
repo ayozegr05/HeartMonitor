@@ -5,7 +5,8 @@ import {
   requestPermission,
 } from 'react-native-health-connect';
 
-import { gte } from 'drizzle-orm';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { eq, gte } from 'drizzle-orm';
 
 import { getDb } from '@/data/db';
 import { garminDays } from '@/data/schema';
@@ -206,6 +207,33 @@ const recOrigin = (r: Record<string, unknown>): string | null =>
  * the day they END (the morning), matching our own "night" semantics.
  * Reading volume stays bounded: raw HR samples collapse to daily max/min.
  */
+const IGNORED_KEY = '@garmin_ignored_days';
+
+const loadIgnoredDays = async (): Promise<Set<string>> => {
+  try {
+    const raw = await AsyncStorage.getItem(IGNORED_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+};
+
+/**
+ * Hides one watch night from every report: drops it from our persisted
+ * copy and remembers the day so later watch reads do not bring it back.
+ * Health Connect and the Garmin account stay untouched.
+ */
+export async function ignoreGarminDay(day: string): Promise<void> {
+  const ignored = await loadIgnoredDays();
+  ignored.add(day);
+  await AsyncStorage.setItem(IGNORED_KEY, JSON.stringify([...ignored]));
+  try {
+    await getDb().delete(garminDays).where(eq(garminDays.day, day));
+  } catch {
+    // La tabla puede no existir todavía; el día ya queda en la lista.
+  }
+}
+
 export async function readGarminSeries(days = 30): Promise<GarminSeries> {
   const empty: GarminSeries = { points: [], source: null };
   if (Platform.OS !== 'android') return empty;
@@ -375,8 +403,9 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
     // Token caducado u offline — Health Connect + caché ya sirven.
   }
 
-  const points = [...byDay.values()].sort((a, b) =>
-    a.day.localeCompare(b.day),
-  );
+  const ignored = await loadIgnoredDays();
+  const points = [...byDay.values()]
+    .filter((p) => !ignored.has(p.day))
+    .sort((a, b) => a.day.localeCompare(b.day));
   return { points, source };
 }

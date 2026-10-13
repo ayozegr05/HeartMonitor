@@ -31,6 +31,7 @@ import {
 } from '@/features/ecg/ecgSessionRecorder';
 import { loadStrips, removeStrip, type CapturedStrip } from '@/features/ecg/stripStore';
 import {
+    ignoreGarminDay,
     readGarminSeries,
     requestGarminReadAccess,
     type GarminDayPoint,
@@ -591,7 +592,7 @@ function GarminCard({
               latest.restingBpm !== undefined &&
                 `FC reposo ${latest.restingBpm} bpm`,
               latest.respirationPerMin !== undefined &&
-                `resp ${latest.respirationPerMin.toFixed(1)}/min`,
+                `${Math.round(latest.respirationPerMin)} respiraciones/min`,
               latest.spo2AvgPct !== undefined &&
                 `SpO2 ${Math.round(latest.spo2AvgPct)}%` +
                   (latest.spo2MinPct !== undefined
@@ -1363,35 +1364,36 @@ function WatchSpo2Trend({ watch }: { watch: GarminSeries | null }) {
       ) : (
       <View style={styles.trendRow}>
         <ChartAxis labels={['100%', `${Math.round(100 - (100 - floor) / 3)}%`, `${Math.round(100 - ((100 - floor) * 2) / 3)}%`, `${floor}%`]} />
-        <View style={{ flex: 1 }}>
-          <NightLine
-            fracs={points.map((point) =>
-              Math.max(
-                0,
-                Math.min(
-                  1,
-                  (((mode === 'min'
-                    ? (point.spo2MinPct ?? point.spo2AvgPct)
-                    : point.spo2AvgPct) ?? floor) -
-                    floor) /
-                    span,
-                ),
-              ),
-            )}
-            color={mode === 'min' ? '#F59E0B' : '#38BDF8'}
-          />
-          <View style={styles.dateRow}>
-            {points.map((point) => (
-              <ThemedText
-                key={point.day}
-                type="small"
-                themeColor="textSecondary"
-                style={styles.dateTickText}>
-                {wdLabel(point.day)}
-              </ThemedText>
-            ))}
-          </View>
-        </View>
+        {points.map((point) => {
+          const v =
+            (mode === 'min'
+              ? (point.spo2MinPct ?? point.spo2AvgPct)
+              : point.spo2AvgPct) ?? floor;
+          const color = v >= 92 ? '#2E7D32' : v >= 88 ? '#F59E0B' : '#E5484D';
+          return (
+            <View key={point.day} style={styles.trendPair}>
+              <View style={styles.trendPairBars}>
+                <View
+                  style={[
+                    styles.trendBar,
+                    {
+                      height: `${Math.max(4, ((v - floor) / span) * 100)}%`,
+                      backgroundColor: color,
+                    },
+                  ]}
+                />
+              </View>
+              <View style={styles.dateTick}>
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  style={styles.dateTickText}>
+                  {wdLabel(point.day)}
+                </ThemedText>
+              </View>
+            </View>
+          );
+        })}
       </View>
       )}
       <ThemedText type="small" themeColor="textSecondary">
@@ -1453,7 +1455,7 @@ function GlobalSummaryCard({
   if (sleepDurations.length > 0) watchLines.push(`😴 ${sleepPhrase(sleepDurations)}`);
   if (hrvValues.length > 0) watchLines.push(`📈 ${hrvPhrase(hrvValues)}`);
   if (lastResp !== undefined)
-    watchLines.push(`🌬️ Respiración: ${lastResp.toFixed(1)}/min última noche`);
+    watchLines.push(`🌬️ ${Math.round(lastResp)} respiraciones de media por minuto la última noche`);
   if (spo2Avg !== null)
     watchLines.push(`🫁 Oxígeno: media ${Math.round(spo2Avg)}% últimos días`);
   if (lastNight?.sleep) {
@@ -1561,18 +1563,70 @@ function phasePhrase(stages: GarminSleepSummary['stagesMs']): string | null {
   return `Fases: ${parts.join(' · ')}.`;
 }
 
+/** "vs tu habitual": within ±10 % of your own mean, else above/below. */
+const vsHabitual = (v: number, base: number | null): string =>
+  base === null
+    ? 'tu nivel habitual'
+    : v > base * 1.1
+      ? 'por encima de tu habitual'
+      : v < base * 0.9
+        ? 'por debajo de tu habitual'
+        : 'tu nivel habitual';
+
 /** Watch morning report — same shape as the band's informe matutino. */
-function WatchMorningCard({ point }: { point: GarminDayPoint }) {
+function WatchMorningCard({
+  point,
+  points,
+}: {
+  point: GarminDayPoint;
+  points: GarminDayPoint[];
+}) {
   const s = point.sleep;
-  const bits: string[] = [];
-  if (point.hrvRmssdMs !== undefined) bits.push(`VFC ${point.hrvRmssdMs} ms`);
-  if (point.restingBpm !== undefined) bits.push(`reposo ${point.restingBpm} bpm`);
+  const hrvBase = avgOf(
+    points
+      .map((p) => p.hrvRmssdMs)
+      .filter((v): v is number => v !== undefined),
+  );
+  const restBase = avgOf(
+    points
+      .map((p) => p.restingBpm)
+      .filter((v): v is number => v !== undefined),
+  );
+  const lines: string[] = [];
+  if (point.hrvRmssdMs !== undefined)
+    lines.push(
+      `📈 VFC ${point.hrvRmssdMs} ms — ${vsHabitual(point.hrvRmssdMs, hrvBase)}`,
+    );
   if (point.respirationPerMin !== undefined)
-    bits.push(`resp ${point.respirationPerMin.toFixed(1)}/min`);
-  if (point.spo2AvgPct !== undefined)
-    bits.push(
-      `SpO₂ ${Math.round(point.spo2AvgPct)}%` +
-        (point.spo2MinPct !== undefined ? ` (mín ${Math.round(point.spo2MinPct)}%)` : ''),
+    lines.push(
+      `🫁 ${Math.round(point.respirationPerMin)} respiraciones de media por minuto — ` +
+        (point.respirationPerMin >= 12 && point.respirationPerMin <= 16
+          ? 'dentro de lo habitual en sueño (12–16)'
+          : 'fuera del rango habitual en sueño (12–16)'),
+    );
+  if (point.spo2MinPct !== undefined || point.spo2AvgPct !== undefined) {
+    const minV = point.spo2MinPct ?? point.spo2AvgPct ?? 0;
+    lines.push(
+      `🩸 SpO₂ mínima ${Math.round(minV)}%` +
+        (point.spo2AvgPct !== undefined
+          ? ` (media ${Math.round(point.spo2AvgPct)}%)`
+          : '') +
+        ` — ${
+          minV >= 92
+            ? 'sin caídas llamativas'
+            : minV >= 88
+              ? 'alguna caída moderada'
+              : 'caída marcada — conviene vigilarla'
+        }`,
+    );
+  }
+  if (point.restingBpm !== undefined)
+    lines.push(
+      `❤️ FC reposo ${point.restingBpm} bpm — ${vsHabitual(point.restingBpm, restBase)}`,
+    );
+  if (point.hrMinBpm !== undefined || point.hrMaxBpm !== undefined)
+    lines.push(
+      `🏃 FC del día ${point.hrMinBpm ?? '?'}–${point.hrMaxBpm ?? '?'} bpm`,
     );
   const phrase = s ? phasePhrase(s.stagesMs) : null;
   return (
@@ -1603,9 +1657,11 @@ function WatchMorningCard({ point }: { point: GarminDayPoint }) {
           El reloj no registró sueño esta noche.
         </ThemedText>
       )}
-      {bits.length > 0 && (
-        <ThemedText type="small">{bits.join(' · ')}</ThemedText>
-      )}
+      {lines.map((l, i) => (
+        <ThemedText key={i} type="small" themeColor="textSecondary">
+          {l}
+        </ThemedText>
+      ))}
     </ThemedView>
   );
 }
@@ -1643,14 +1699,35 @@ function WatchDayCard({ point }: { point: GarminDayPoint }) {
 }
 
 /** Night card when only the watch has data (no band session that night). */
-function WatchNightCard({ point }: { point: GarminDayPoint }) {
+function WatchNightCard({
+  point,
+  onDelete,
+}: {
+  point: GarminDayPoint;
+  onDelete?: (day: string) => void;
+}) {
+  const theme = useTheme();
   const ws = point.sleep;
   const night = new Date(`${point.day}T12:00:00`).toLocaleDateString(
     undefined,
     { weekday: 'short', day: 'numeric', month: 'short' },
   );
   return (
-    <ThemedView type="backgroundElement" style={styles.card}>
+    <Pressable
+      style={[styles.card, { backgroundColor: theme.backgroundElement }]}
+      onLongPress={
+        onDelete
+          ? () =>
+              Alert.alert(
+                'Borrar esta noche',
+                'Se quitará de la app para siempre (no afecta a Garmin ni a Health Connect) y no volverá al releer el reloj.',
+                [
+                  { text: 'Cancelar', style: 'cancel' },
+                  { text: 'Borrar', style: 'destructive', onPress: () => onDelete(point.day) },
+                ],
+              )
+          : undefined
+      }>
       <ThemedView style={styles.cardHeader}>
         <ThemedText type="smallBold" style={styles.cardTitle}>
           {night}
@@ -1672,7 +1749,7 @@ function WatchNightCard({ point }: { point: GarminDayPoint }) {
           point.hrvRmssdMs !== undefined && `VFC ${point.hrvRmssdMs} ms`,
           point.restingBpm !== undefined && `reposo ${point.restingBpm} bpm`,
           point.respirationPerMin !== undefined &&
-            `resp ${point.respirationPerMin.toFixed(1)}/min`,
+            `${Math.round(point.respirationPerMin)} respiraciones/min`,
           point.spo2AvgPct !== undefined &&
             `SpO2 ${Math.round(point.spo2AvgPct)}%` +
               (point.spo2MinPct !== undefined
@@ -1682,7 +1759,7 @@ function WatchNightCard({ point }: { point: GarminDayPoint }) {
           .filter(Boolean)
           .join(' · ')}
       </ThemedText>
-    </ThemedView>
+    </Pressable>
   );
 }
 
@@ -2161,6 +2238,7 @@ export default function ReportsScreen() {
                                 p.respirationPerMin !== undefined,
                             )!
                         }
+                        points={garmin!.points}
                       />
                       <WatchSleepTrend watch={garmin} />
                       <WatchSpo2Trend watch={garmin} />
@@ -2357,7 +2435,7 @@ export default function ReportsScreen() {
                 ListHeaderComponent={
                   <>
                     {(watchRows[0]?.point ?? null) !== null && (
-                      <WatchMorningCard point={watchRows[0].point} />
+                      <WatchMorningCard point={watchRows[0].point} points={garmin?.points ?? []} />
                     )}
                     <WatchSleepTrend watch={garmin} />
                     <WatchSpo2Trend watch={garmin} />
@@ -2371,7 +2449,20 @@ export default function ReportsScreen() {
                   </ThemedText>
                 }
                 renderItem={({ item }) => (
-                  <WatchNightCard point={item.point} />
+                  <WatchNightCard
+                    point={item.point}
+                    onDelete={(day) => {
+                      ignoreGarminDay(day).catch(() => {});
+                      setGarmin((g) =>
+                        g
+                          ? {
+                              ...g,
+                              points: g.points.filter((p) => p.day !== day),
+                            }
+                          : g,
+                      );
+                    }}
+                  />
                 )}
               />
             ) : (
