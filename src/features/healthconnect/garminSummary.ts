@@ -166,6 +166,8 @@ export interface GarminDayPoint {
   hrMinBpm?: number;
   /** True daily average computed from the raw HC heart-rate samples. */
   hrAvgBpm?: number;
+  /** Longest sustained run of HR samples below 35 bpm, in minutes. */
+  lowHrRunMin?: number;
 }
 
 export interface GarminSeries {
@@ -342,6 +344,7 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
   } catch { /* ignore */ }
 
   const hrSum = new Map<string, { sum: number; n: number }>();
+  const lowRun = new Map<string, { start: number; last: number; best: number }>();
   try {
     for (const r of await hcAll('HeartRate')) {
       const samples = r.samples as { beatsPerMinute: number }[] | undefined;
@@ -355,12 +358,29 @@ export async function readGarminSeries(days = 30): Promise<GarminSeries> {
         p.hrMinBpm = p.hrMinBpm === undefined ? bpm : Math.min(p.hrMinBpm, bpm);
         acc.sum += bpm;
         acc.n += 1;
+        // Sustained low-HR runs (same bar as the band's nightLowBpm): a
+        // new run starts when samples sit below the threshold after a
+        // >90 s gap — sleep dips above it stay noise.
+        const t = Date.parse((s as { time?: string }).time ?? '');
+        if (!Number.isNaN(t)) {
+          const run = lowRun.get(day) ?? { start: t, last: t - 1e9, best: 0 };
+          if (bpm < 35) {
+            if (t - run.last > 90_000) run.start = t;
+            run.last = t;
+            run.best = Math.max(run.best, (t - run.start) / 60_000);
+          }
+          lowRun.set(day, run);
+        }
       }
       hrSum.set(day, acc);
       see(r);
     }
     for (const [day, acc] of hrSum) {
       if (acc.n > 0) point(day).hrAvgBpm = Math.round(acc.sum / acc.n);
+    }
+    for (const [day, run] of lowRun) {
+      const min = Math.round(run.best);
+      if (min >= 5) point(day).lowHrRunMin = min;
     }
   } catch { /* ignore */ }
 

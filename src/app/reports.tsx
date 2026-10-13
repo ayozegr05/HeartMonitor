@@ -1745,19 +1745,25 @@ function FcLineTrend({
           </View>
         </View>
       )}
-      <ThemedText type="small" themeColor="textSecondary">
-        <ThemedText type="small" style={{ color: '#E5484D' }}>—</ThemedText>{' '}
-        máxima ·{' '}
-        <ThemedText type="small" style={{ color: '#93C5FD' }}>—</ThemedText>{' '}
-        mínima ·{' '}
-        <ThemedText type="small" style={{ color: '#F5F5F5' }}>—</ThemedText>{' '}
-        {midNote}
-      </ThemedText>
       {last !== undefined && (
         <ThemedText type="small" themeColor="textSecondary">
-          última: mín {last.min}
-          {last.mid !== null ? ` · media ${last.mid}` : ''} · máx {last.max}{' '}
-          bpm
+          <ThemedText type="small" style={{ color: '#E5484D' }}>—</ThemedText>
+          {' máx '}
+          {last.max} ·{' '}
+          <ThemedText type="small" style={{ color: '#93C5FD' }}>—</ThemedText>
+          {' mín '}
+          {last.min}
+          {last.mid !== null && (
+            <>
+              {' · '}
+              <ThemedText type="small" style={{ color: '#F5F5F5' }}>
+                —
+              </ThemedText>
+              {' media '}
+              {last.mid}
+            </>
+          )}{' '}
+          bpm (última)
         </ThemedText>
       )}
     </ThemedView>
@@ -1828,18 +1834,10 @@ function BandFcTrend({
 /** Watch-day row for the FC tab: daily HR range, resting HR and steps. */
 function WatchDayCard({ point }: { point: GarminDayPoint }) {
   const bits: string[] = [];
-  if (point.hrMinBpm !== undefined || point.hrMaxBpm !== undefined)
-    bits.push(
-      `❤️ mín ${point.hrMinBpm ?? '?'}` +
-        (point.hrAvgBpm !== undefined ? ` · media ${point.hrAvgBpm}` : '') +
-        ` · máx ${point.hrMaxBpm ?? '?'} bpm`,
-    );
-  if (point.restingBpm !== undefined) {
-    bits.push(`🛌 reposo ${point.restingBpm} bpm`);
-  }
   if (point.hrvRmssdMs !== undefined) {
     bits.push(`📈 VFC ${point.hrvRmssdMs} ms`);
   }
+  const hasHr = point.hrMinBpm !== undefined || point.hrMaxBpm !== undefined;
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
       <ThemedView style={styles.cardHeader}>
@@ -1850,12 +1848,35 @@ function WatchDayCard({ point }: { point: GarminDayPoint }) {
           reloj
         </ThemedText>
       </ThemedView>
-      {bits.length > 0 ? (
-        bits.map((l, i) => (
-          <ThemedText key={i} type="small">
-            {l}
-          </ThemedText>
-        ))
+      {hasHr ? (
+        <>
+          <View style={styles.statsRow}>
+            <StatBlock
+              label="MÍN"
+              value={String(point.hrMinBpm ?? '—')}
+              color="#E5484D"
+            />
+            <StatBlock label="MEDIA" value={String(point.hrAvgBpm ?? '—')} />
+            <StatBlock label="MÁX" value={String(point.hrMaxBpm ?? '—')} />
+            <StatBlock
+              label="REPOSO"
+              value={String(point.restingBpm ?? '—')}
+            />
+          </View>
+          {bits.map((l, i) => (
+            <ThemedText key={i} type="small">
+              {l}
+            </ThemedText>
+          ))}
+          {point.lowHrRunMin !== undefined && (
+            <ThemedText
+              type="small"
+              style={{ color: '#E5484D', marginTop: Spacing.one }}
+            >
+              ⚠️ FC baja sostenida ~{point.lowHrRunMin} min
+            </ThemedText>
+          )}
+        </>
       ) : (
         <ThemedText type="small" themeColor="textSecondary">
           sin datos de FC este día
